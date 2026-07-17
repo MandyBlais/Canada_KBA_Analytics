@@ -9,6 +9,7 @@ library(dplyr)
 # Querying ONLY the official, published registry
 KBA_API_URL   <- "https://gis.natureserve.ca/arcgis/rest/services/EBAR-KBA/KBA_Accepted_Sites/FeatureServer/0"
 CPCAD_API_URL <- "https://maps-cartes.ec.gc.ca/arcgis/rest/services/CWS_SCF/CPCAD/MapServer/0"
+CH_API_URL    <- "https://maps-cartes.ec.gc.ca/arcgis/rest/services/CWS_SCF/CriticalHabitat/MapServer/3" 
 CACHE_PATH    <- "data/cached_compiled_data.rds"
 
 refresh_spatial_cache <- function() {
@@ -23,6 +24,7 @@ refresh_spatial_cache <- function() {
   
   cpcad_client <- arc_open(CPCAD_API_URL)
   
+  ch_client <- arc_open(CH_API_URL)
   
   
   # 1. Download accepted KBAs directly in EPSG:3978 from the server
@@ -55,7 +57,8 @@ refresh_spatial_cache <- function() {
     
     crs = 3978,
     
-    fields = c("PARENT_ID", "ZONE_ID", "NAME_E", "IUCN_CAT", "PA_OECM_DF", "TYPE_E", "OWNER_E") 
+    # ADDED MGMT_E to fields array below:
+    fields = c("PARENT_ID", "ZONE_ID", "NAME_E", "IUCN_CAT", "PA_OECM_DF", "TYPE_E", "OWNER_E", "MGMT_E", "GOV_TYPE", "MPLAN", "MPLAN_REF")
     
   )
   
@@ -136,58 +139,58 @@ refresh_spatial_cache <- function() {
     # Baseline empty table structure fallback if absolutely zero intersections happen across Canada
     cumulative_protection <- tibble(kbasiteid = character(), CUMULATIVE_PROPORTION = numeric())
   }
-
-
-# 7. Finalize Master KBA Layer (Ensures ALL accepted sites are retained via left_join)
-
-kba_compiled <- kba_sf %>%
   
-  left_join(cumulative_protection, by = "kbasiteid") %>% 
   
-  mutate(CUMULATIVE_PROPORTION = coalesce(CUMULATIVE_PROPORTION, 0.0)) %>%
+  # 7. Finalize Master KBA Layer (Ensures ALL accepted sites are retained via left_join)
   
-  st_transform(4326) # Project to WGS84 for Leaflet Map
-
-
-
-# 8. Optimize CPCAD layer payload size for fast map rendering
-
-intersected_cpcad_ids <- unique(intersection_sf$ZONE_ID)
-
-cpcad_optimized <- cpcad_sf %>%
+  kba_compiled <- kba_sf %>%
+    
+    left_join(cumulative_protection, by = "kbasiteid") %>% 
+    
+    mutate(CUMULATIVE_PROPORTION = coalesce(CUMULATIVE_PROPORTION, 0.0)) %>%
+    
+    st_transform(4326) # Project to WGS84 for Leaflet Map
   
-  filter(ZONE_ID %in% intersected_cpcad_ids) %>%
   
-  st_transform(4326)
-
-
-
-# Preserve the actual spatial intersection shapes for mapping overlays
-
-overlap_layer_4326 <- intersection_sf %>% st_transform(4326)
-
-
-
-# 9. Save App-Ready Payload
-
-output_payload <- list(
   
-  kba_layer   = kba_compiled,       # Every single official KBA site (Unprotected sites = 0.0)
+  # 8. Optimize CPCAD layer payload size for fast map rendering
   
-  cpcad_layer = cpcad_optimized,     # Lightweight CPCAD base outlines intersecting our target set
+  intersected_cpcad_ids <- unique(intersection_sf$ZONE_ID)
   
-  overlaps    = overlap_layer_4326,  # Precise geometric overlap shapes + attribute tables
+  cpcad_optimized <- cpcad_sf %>%
+    
+    filter(ZONE_ID %in% intersected_cpcad_ids) %>%
+    
+    st_transform(4326)
   
-  timestamp   = Sys.time()
   
-)
-
-
-
-if(!dir.exists("data")) dir.create("data")
-
-saveRDS(output_payload, CACHE_PATH)
-
-message("--- Sync Complete. Accepted KBA master cache refreshed. ---")
-
+  
+  # Preserve the actual spatial intersection shapes for mapping overlays
+  
+  overlap_layer_4326 <- intersection_sf %>% st_transform(4326)
+  
+  
+  
+  # 9. Save App-Ready Payload
+  
+  output_payload <- list(
+    
+    kba_layer    = kba_compiled,       # Every single official KBA site (Unprotected sites = 0.0)
+    
+    cpcad_layer = cpcad_optimized,     # Lightweight CPCAD base outlines intersecting our target set
+    
+    overlaps    = overlap_layer_4326,  # Precise geometric overlap shapes + attribute tables
+    
+    timestamp   = Sys.time()
+    
+  )
+  
+  
+  
+  if(!dir.exists("data")) dir.create("data")
+  
+  saveRDS(output_payload, CACHE_PATH)
+  
+  message("--- Sync Complete. Accepted KBA master cache refreshed. ---")
+  
 }
