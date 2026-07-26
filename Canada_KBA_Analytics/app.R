@@ -9,26 +9,41 @@ library(DT)
 library(gfonts)
 library(fresh)
 
-CACHE_FILE <- "data/cached_compiled_data.rds"
+CACHE_PATH <- "data/cached_compiled_data.rds"
 
-# 1. Gracefully load cache on initialization
-if (file.exists(CACHE_FILE)) {
-  data_payload <- readRDS(CACHE_FILE)
-} else {
-  # Safe fallback structure if the app is booted without a cache file
-  data_payload <- list(
-    kba_layer = NULL, 
-    cpcad_layer = NULL, 
-    overlaps = NULL, 
-    timestamp = "No Local Cache Binary Found"
-  )
+# Helper function to generate dropdown province/territory choices safely
+get_province_choices <- function(kba_df) {
+  base_provinces <- if (!is.null(kba_df)) {
+    kba_cols <- tolower(colnames(kba_df))
+    jur_idx <- match(TRUE, kba_cols %in% c("jurisdiction_en", "jurisdiction_fr", "jurisdiction_es", "jurisdiction"))
+    if (!is.na(jur_idx)) sort(unique(kba_df[[jur_idx]])) else NULL
+  } else NULL
+  
+  c("All", sort(unique(c(base_provinces, "Federal Offshore/Marine"))))
 }
 
+# 1. Gracefully load cache on initialization
+if (file.exists(CACHE_PATH)) {
+  data_payload <- readRDS(CACHE_PATH)
+} else {
+  data_payload <- list(
+    kba_layer           = NULL, 
+    cpcad_layer         = NULL, 
+    ch_layer            = NULL,
+    cpcad_overlaps      = NULL,
+    ch_kba_overlaps     = NULL,
+    national_cpcad_km2  = 0,
+    national_ch_km2     = 0,
+    cpcad_prov_summary  = NULL,
+    ch_prov_summary     = NULL,
+    timestamp           = "No Local Cache Binary Found"
+  )
+}
 
 # 2. CREATE CUSTOM BRANDING THEME
 kba_theme <- create_theme(
   adminlte_color(
-    light_blue = "#0AA1F4"      # Primary Blue (accent)
+    light_blue = "#0AA1F4"      # Primary Blue
   ),
   adminlte_sidebar(
     dark_bg = "#2f4858",        # Secondary Dark Blue/Teal background
@@ -36,7 +51,7 @@ kba_theme <- create_theme(
     dark_color = "#ffffff"
   ),
   adminlte_global(
-    content_bg = "#3a3426",     # Main background color (Dark Brown)
+    content_bg = "#3a3426",     # Main background color
     box_bg = "#ffffff"
   )
 )
@@ -48,43 +63,49 @@ ui <- dashboardPage(
   sidebar = dashboardSidebar(
     width = 320,
     sidebarMenu(
-      tags$div(style = "padding: 15px; color: #fff;",
-               h4("Spatial Filter Configurations", class = "client-subhead", style = "margin-top: 0;"),
-               p("Isolate regions using the dropdowns or click directly on a map boundary polygon.", class = "client-body", style = "color: #b8c7ce; font-size: 12px;"),
-               hr(style = "border-color: #92bf00; border-width: 2px;"), # Green primary accent line
-               
-               # Geographic Hierarchy Filters
-               selectInput("provinceFilter", "Province / Territory:", 
-                           choices = c("All", sort(unique(data_payload$kba_layer$jurisdiction_en)))),
-               
-               selectInput("kbaFilter", "Select Specific KBA Site:", 
-                           choices = c("All", sort(unique(paste0(data_payload$kba_layer$kbasiteid, " - ", data_payload$kba_layer$nationalname))))),
-               
-               hr(style = "border-color: #92bf00; border-width: 2px;"), # Green primary accent line
-               # Operational Utilities
-               actionButton("runSync", "Force API Data Refresh", 
-                            style = "width: 100%; font-weight: bold; background-color: #ffcb00; color: #3a3426; border-color: #ffcb00;"), # Yellow primary accent button
-               br(), br(),
-               tags$small(textOutput("cacheTimeText"), class = "client-body", style = "color: #9ca8b0;")
+      tags$div(
+        style = "padding: 15px; color: #fff;",
+        h4("Spatial Filter Configurations", class = "client-subhead", style = "margin-top: 0;"),
+        p("Isolate regions using the dropdowns or click directly on a map boundary polygon.", class = "client-body", style = "color: #b8c7ce; font-size: 12px;"),
+        hr(style = "border-color: #92bf00; border-width: 2px;"),
+        
+        # Geographic Hierarchy Filters
+        selectInput(
+          "provinceFilter", "Province / Territory:", 
+          choices = get_province_choices(data_payload$kba_layer)
+        ),
+        
+        selectInput(
+          "kbaFilter", "Select Specific KBA Site:", 
+          choices = c("All", if (!is.null(data_payload$kba_layer)) sort(unique(paste0(data_payload$kba_layer$kbasiteid, " - ", data_payload$kba_layer$nationalname))) else "All")
+        ),
+        
+        hr(style = "border-color: #92bf00; border-width: 2px;"),
+        
+        # Layer Visibility Controls
+        h5("Map Layer Toggles", class = "client-subhead", style = "color: #fff;"),
+        checkboxInput("showKBA", "Show KBAs (Green)", value = TRUE),
+        checkboxInput("showCPCAD", "Show CPCAD Overlaps (Blue)", value = FALSE),
+        checkboxInput("showCH", "Show Critical Habitat (Yellow)", value = FALSE),
+        
+        hr(style = "border-color: #92bf00; border-width: 2px;"),
+        # Operational Utilities
+        actionButton(
+          "runSync", "Force API Data Refresh", 
+          style = "width: 100%; font-weight: bold; background-color: #ffcb00; color: #3a3426; border-color: #ffcb00;"
+        ),
+        br(), br(),
+        tags$small(textOutput("cacheTimeText"), class = "client-body", style = "color: #9ca8b0;")
       )
     )
   ),
   
   body = dashboardBody(
-    # Use the fresh custom theme
     use_theme(kba_theme),
     
-    # Custom Head Injectors for Typography and Specific Branded UI elements
     tags$head(
-      # Import Open Sans from Google Fonts
       tags$link(rel = "stylesheet", href = "https://fonts.googleapis.com/css2?family=Open+Sans:wght@300;700&display=swap"),
-      # Import Rift from Adobe Fonts (assuming Adobe Web Project ID is active, or using local/web-font fallback)
-      # If using Adobe Fonts, swap the URL below with your client's Adobe Project CSS URL:
-      tags$link(rel = "stylesheet", href = "https://use.typekit.net/xxxxxxx.css"), 
-      
       tags$style(HTML("
-        /* --- BRANDED TYPOGRAPHY --- */
-        /* Fallback to Impact/sans-serif if Rift (Adobe) isn't loaded locally or via Typekit */
         h1, h2, h3, .logo, .main-header .logo { 
           font-family: 'rift', 'Impact', sans-serif !important; 
           font-weight: 700 !important; 
@@ -98,51 +119,67 @@ ui <- dashboardPage(
         
         .client-body, p, span, li, td, th, input, select, .control-label { 
           font-family: 'Open Sans', sans-serif !important; 
-          font-weight: 300 !important; /* Open Sans Light */
+          font-weight: 300 !important; 
         }
         
-        /* --- BRANDED INTERFACE COLORS --- */
-        /* Header styling */
-        .main-header .navbar { background-color: #0AA1F4 !important; } /* Blue Accent */
-        .main-header .logo { background-color: #2f4858 !important; color: #92bf00 !important; } /* Dark Blue background, Green Logo text */
+        .main-header .navbar { background-color: #0AA1F4 !important; }
+        .main-header .logo { background-color: #2f4858 !important; color: #92bf00 !important; }
+        .content-wrapper { background-color: #3a3426 !important; }
+        #right-panel { background: #ffffff; border-left: 4px solid #92bf00; padding: 20px; height: calc(100vh - 80px); overflow-y: auto; }
         
-        /* Layout structures */
-        .content-wrapper { background-color: #3a3426 !important; } /* Secondary Brown Background */
-        #right-panel { background: #ffffff; border-left: 4px solid #92bf00; padding: 20px; height: calc(100vh - 80px); overflow-y: auto; } /* Green accent left border */
+        .metric-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 10px; margin-bottom: 10px; }
+        .metric-title { font-size: 10px; text-transform: uppercase; color: #2f4858; font-weight: 700; }
+        .metric-value { font-size: 16px; color: #0AA1F4; font-weight: bold; }
+        .metric-value-ch { font-size: 16px; color: #d97706; font-weight: bold; }
         
-        /* Metric Styling */
-        .metric-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 12px; margin-bottom: 10px; }
-        .metric-title { font-size: 11px; text-transform: uppercase; color: #2f4858; font-weight: 700; }
-        .metric-value { font-size: 18px; color: #0AA1F4; font-weight: bold; }
+        .well-unprotected { background-color: #fff1f2; border-left: 5px solid #ef4444; color: #3a3426; padding: 12px; border-radius: 6px; }
+        .well-protected { background-color: #f0fdf4; border-left: 5px solid #92bf00; color: #2f4858; padding: 12px; border-radius: 6px; }
         
-        /* Callout Wells */
-        .well-unprotected { background-color: #fff1f2; border-left: 5px solid #ffcb00; color: #3a3426; padding: 15px; border-radius: 6px; } /* Yellow Accent border */
-        .well-protected { background-color: #f0fdf4; border-left: 5px solid #92bf00; color: #2f4858; padding: 15px; border-radius: 6px; } /* Green Accent border */
+        .header-footnote { font-size: 11px; color: #64748b; font-style: italic; line-height: 1.4; margin-top: 8px; margin-bottom: 5px; }
       "))
     ),
     
     fluidRow(
       # Map Viewport Layout Column
-      column(width = 7,
-             box(title = "National Conservation Baseline Map", width = NULL, solidHeader = TRUE, status = "primary",
-                 leafletOutput("mapElement", height = "760px")
-             )
+      column(
+        width = 6,
+        box(
+          title = "National Conservation Baseline Map", width = NULL, solidHeader = TRUE, status = "primary",
+          leafletOutput("mapElement", height = "780px")
+        )
       ),
       
       # Dynamic Side Attributes Column
-      column(width = 5, id = "right-panel",
-             h3("Biodiversity & Conservation Attributes", style = "margin-top: 0; color: #2f4858;"),
-             p("Detailed site telemetry and overlapping legal designations.", class = "client-body", style = "color: #3a3426; margin-bottom: 20px;"),
-             hr(style = "border-color: #92bf00;"),
-             
-             # Selected KBA Core Metadata Block
-             uiOutput("kbaSelectionHeader"),
-             br(),
-             
-             # Tabular breakdown of intersecting CPCAD elements
-             h4("Overlapping CPCAD Sites Inventory", class = "client-subhead", style = "color: #2f4858;"),
-             p("Individual contributing federal, provincial, and territorial conservation shapes.", class = "client-body", style = "color: #3a3426; font-size: 12px;"),
-             DTOutput("overlapTable")
+      column(
+        width = 6, id = "right-panel",
+        h3("Biodiversity & Conservation Attributes", style = "margin-top: 0; color: #2f4858;"),
+        p("Detailed site telemetry, legal protection, and species risk attributes.", class = "client-body", style = "color: #3a3426; margin-bottom: 15px;"),
+        hr(style = "border-color: #92bf00;"),
+        
+        uiOutput("kbaSelectionHeader"),
+        br(),
+        
+        tabsetPanel(
+          type = "tabs",
+          tabPanel(
+            "KBA Sites Inventory",
+            br(),
+            p("Designated Key Biodiversity Areas within current spatial selection.", class = "client-body", style = "color: #3a3426; font-size: 12px;"),
+            DTOutput("kbaTable")
+          ),
+          tabPanel(
+            "CPCAD Protected Areas",
+            br(),
+            p("Individual contributing protected and conserved area shapes.", class = "client-body", style = "color: #3a3426; font-size: 12px;"),
+            DTOutput("overlapTable")
+          ),
+          tabPanel(
+            "Critical Habitat (CH)",
+            br(),
+            p("Species at Risk Critical Habitat overlapping this site.", class = "client-body", style = "color: #3a3426; font-size: 12px;"),
+            DTOutput("chTable")
+          )
+        )
       )
     )
   )
@@ -151,35 +188,49 @@ ui <- dashboardPage(
 # 4. --- SERVER COMPUTATION LOGIC ---
 server <- function(input, output, session) {
   
-  # Reactive memory container tracking spatial assets
   current_data <- reactiveValues(
-    kba           = data_payload$kba_layer,
-    cpcad         = data_payload$cpcad_layer,
-    intersections = data_payload$overlaps,
-    time          = data_payload$timestamp
+    kba                = data_payload$kba_layer,
+    cpcad              = data_payload$cpcad_layer,
+    ch                 = data_payload$ch_layer,
+    cpcad_overlaps     = data_payload$cpcad_overlaps,
+    ch_kba_overlaps    = data_payload$ch_kba_overlaps,
+    national_cpcad_km2 = data_payload$national_cpcad_km2,
+    national_ch_km2    = data_payload$national_ch_km2,
+    cpcad_prov_summary = data_payload$cpcad_prov_summary,
+    ch_prov_summary    = data_payload$ch_prov_summary,
+    time               = data_payload$timestamp
   )
   
-  # Extract true alpha ID string out of the composite dropdown text selection
   selected_kba_id <- reactive({
     if (is.null(input$kbaFilter) || input$kbaFilter == "All") return("All")
     sub(" - .*", "", input$kbaFilter)
   })
   
-  # Reactive Trigger: In-app execution button to pipeline data engine source
+  # Static footnote block definition
+  static_footnote_ui <- tags$p(
+    class = "header-footnote",
+    "CPCAD totals reflect terrestrial and inland protected areas per province/territory; offshore marine protected areas are categorized under Federal / Offshore jurisdiction. Critical Habitat and KBA totals include adjacent coastal and marine areas."
+  )
+  
   observeEvent(input$runSync, {
     showModal(modalDialog("Querying APIs & Re-Calculating Spatial Intersections... Please wait.", footer = NULL))
     tryCatch({
       source("data_engine.R")
       refresh_spatial_cache()
       
-      new_payload <- readRDS(CACHE_FILE)
-      current_data$kba           <- new_payload$kba_layer
-      current_data$cpcad         <- new_payload$cpcad_layer
-      current_data$intersections <- new_payload$overlaps
-      current_data$time          <- new_payload$timestamp
+      new_payload <- readRDS(CACHE_PATH)
+      current_data$kba                <- new_payload$kba_layer
+      current_data$cpcad              <- new_payload$cpcad_layer
+      current_data$ch                 <- new_payload$ch_layer
+      current_data$cpcad_overlaps     <- new_payload$cpcad_overlaps
+      current_data$ch_kba_overlaps    <- new_payload$ch_kba_overlaps
+      current_data$national_cpcad_km2 <- new_payload$national_cpcad_km2
+      current_data$national_ch_km2    <- new_payload$national_ch_km2
+      current_data$cpcad_prov_summary <- new_payload$cpcad_prov_summary
+      current_data$ch_prov_summary    <- new_payload$ch_prov_summary
+      current_data$time               <- new_payload$timestamp
       
-      # Refresh UI selection indices based on newly retrieved cache schema
-      updateSelectInput(session, "provinceFilter", choices = c("All", sort(unique(current_data$kba$jurisdiction_en))))
+      updateSelectInput(session, "provinceFilter", choices = get_province_choices(current_data$kba))
       kba_choices <- c("All", sort(unique(paste0(current_data$kba$kbasiteid, " - ", current_data$kba$nationalname))))
       updateSelectInput(session, "kbaFilter", choices = kba_choices)
       
@@ -191,27 +242,27 @@ server <- function(input, output, session) {
   
   output$cacheTimeText <- renderText({ paste("Data Timestamp:", current_data$time) })
   
-  # Master Filter Logic: Modifies baseline visibility parameters without dropping empty shapes
   filtered_kba <- reactive({
     df <- current_data$kba
     if (is.null(df)) return(NULL)
     if (input$provinceFilter != "All") { 
-      df <- df %>% filter(jurisdiction_en == input$provinceFilter) 
+      kba_cols <- tolower(colnames(df))
+      jur_idx <- match(TRUE, kba_cols %in% c("jurisdiction_en", "jurisdiction_fr", "jurisdiction_es", "jurisdiction"))
+      if (!is.na(jur_idx)) {
+        col_name <- colnames(df)[jur_idx]
+        df <- df[df[[col_name]] == input$provinceFilter, ]
+      }
     }
     df
   })
   
-  # Sync dynamic dropdown cascade filters: Changes available sites when changing provinces
   observeEvent(input$provinceFilter, {
     req(current_data$kba)
-    if (input$provinceFilter == "All") {
-      subset_kbas <- current_data$kba
-    } else {
-      subset_kbas <- current_data$kba %>% filter(jurisdiction_en == input$provinceFilter)
-    }
+    subset_kbas <- filtered_kba()
+    req(subset_kbas)
+    
     kba_choices <- c("All", sort(unique(paste0(subset_kbas$kbasiteid, " - ", subset_kbas$nationalname))))
     
-    # Preserve active selection if it remains valid under the new scope filter
     current_sel <- input$kbaFilter
     if (current_sel %in% kba_choices) {
       updateSelectInput(session, "kbaFilter", choices = kba_choices, selected = current_sel)
@@ -220,27 +271,24 @@ server <- function(input, output, session) {
     }
   }, ignoreInit = TRUE)
   
-  # --- LEAFLET MAP RENDERING PIPELINE ---
+  # --- LEAFLET MAP INITIALIZATION ---
   output$mapElement <- renderLeaflet({
     req(current_data$kba)
     
-    leaflet() %>%
+    leaflet(options = leafletOptions(preferCanvas = TRUE)) %>% 
       addProviderTiles(providers$CartoDB.Positron) %>%
       setView(lng = -96.8, lat = 62.4, zoom = 4) %>%
-      
-      # ADD MATCHED CONSERVATION LEGEND WITH BRANDED CSS INJECTION
       addLegend(
         position = "bottomright",
-        colors = c("#92bf00", "#0AA1F4", "#FFCB00"), # Added Branded Yellow Hex
+        colors = c("#92bf00", "#0AA1F4", "#FFCB00"),
         labels = c(
-          "Key Biodiversity Area (KBA)", 
-          "Protected Area Overlap (CPCAD)",
-          "Active CPCAD Outline & Overlap" # Explains the yellow hover
+          "Key Biodiversity Area (Green)", 
+          "CPCAD Protected Area (Blue)",
+          "Critical Habitat (Yellow)"
         ),
-        title = "Conservation Boundaries",
+        title = "Conservation Layers",
         opacity = 0.85
       ) %>%
-      # Inline CSS injection to force Leaflet layers to respect client font guidelines
       htmlwidgets::onRender("
         function(el, x) {
           var legend = document.querySelector('.leaflet-control-legend');
@@ -250,14 +298,11 @@ server <- function(input, output, session) {
             legend.style.backgroundColor = 'rgba(255, 255, 255, 0.95)';
             legend.style.border = '2px solid #2f4858';
             legend.style.borderRadius = '6px';
-            
-            // Force Title to use Rift Bold / Headline font
             var title = legend.querySelector('strong');
             if (title) {
               title.style.fontFamily = 'rift, Impact, sans-serif';
               title.style.fontWeight = '700';
               title.style.textTransform = 'uppercase';
-              title.style.letterSpacing = '1px';
               title.style.color = '#2f4858';
             }
           }
@@ -265,177 +310,139 @@ server <- function(input, output, session) {
       ")
   })
   
-  # Observer 1: Updates base polygons based on broad provincial scope selections
+  # --- OBSERVER 1: MAP LAYERS (FULL CPCAD + CH DISPLAY) ---
   observe({
-    req(filtered_kba())
+    kba_raw <- filtered_kba()
+    
+    # 1. Guard against NULL or empty layer data
+    req(kba_raw)
+    if (is.null(kba_raw) || nrow(kba_raw) == 0) return()
+    
     proxy <- leafletProxy("mapElement") %>% clearShapes()
     
-    # SAFE GEOMETRY RESOLUTION: Explicitly find and bind the geometry column regardless of casing
-    kba_data <- filtered_kba()
-    geom_col <- attr(kba_data, "sf_column")
-    if (!(geom_col %in% colnames(kba_data))) {
-      # Fallback: if columns were capitalized to GEOMETRY, re-bind it
-      true_geom <- colnames(kba_data)[typeof(st_geometry(kba_data)) == "list" | grepl("geometry", colnames(kba_data), ignore.case = TRUE)][1]
-      st_geometry(kba_data) <- true_geom
+    # 2. Filter geometries safely
+    kba_data <- kba_raw %>% filter(as.character(st_geometry_type(.)) %in% c("POLYGON", "MULTIPOLYGON"))
+    
+    # Filter CPCAD layer by province selection
+    cpcad_data <- current_data$cpcad
+    if (!is.null(cpcad_data) && nrow(cpcad_data) > 0 && input$provinceFilter != "All") {
+      cpcad_cols <- tolower(colnames(cpcad_data))
+      loc_idx <- match(TRUE, cpcad_cols %in% c("loc", "loc_e", "jur_id", "province_e", "jurisdiction_en", "jurisdiction_es"))
+      if (!is.na(loc_idx)) {
+        col_name <- colnames(cpcad_data)[loc_idx]
+        cpcad_data <- cpcad_data[grepl(input$provinceFilter, cpcad_data[[col_name]], ignore.case = TRUE), ]
+      }
     }
     
-    polygon_only_kba <- kba_data %>% 
-      filter(st_geometry_type(.) %in% c("POLYGON", "MULTIPOLYGON"))
+    # Filter CH layer by province selection
+    ch_data <- current_data$ch
+    if (!is.null(ch_data) && nrow(ch_data) > 0 && input$provinceFilter != "All") {
+      ch_cols <- tolower(colnames(ch_data))
+      prov_idx <- match(TRUE, ch_cols %in% c("provterr_e", "provterr", "jurisdiction_en", "jurisdiction_es", "province_e"))
+      if (!is.na(prov_idx)) {
+        col_name <- colnames(ch_data)[prov_idx]
+        ch_data <- ch_data[grepl(input$provinceFilter, ch_data[[col_name]], ignore.case = TRUE), ]
+      }
+    }
     
-    proxy %>% addPolygons(
-      data = polygon_only_kba,
-      color = "#2f4858",       # Client Secondary Dark Blue for crisp outlines
-      weight = 1.0,            # Thin border line weight
-      fillOpacity = 0.65,      
-      fillColor = "#92bf00",   # Client Primary Brand Green
-      layerId = ~kbasiteid,
-      label = ~paste(kbasiteid, "-", nationalname),
-      # Branded highlight interaction
-      highlightOptions = highlightOptions(
-        weight = 2.5, 
-        color = "#ffcb00",     # Client Primary Yellow on hover
-        fillOpacity = 0.8, 
-        bringToFront = FALSE
+    # Render CPCAD
+    if (input$showCPCAD && !is.null(cpcad_data) && nrow(cpcad_data) > 0) {
+      cpcad_poly <- cpcad_data %>% filter(as.character(st_geometry_type(.)) %in% c("POLYGON", "MULTIPOLYGON"))
+      if (nrow(cpcad_poly) > 0) {
+        cpcad_names  <- colnames(cpcad_poly)
+        name_field   <- cpcad_names[tolower(cpcad_names) %in% c("name_e", "name", "pa_name_e")][1]
+        cpcad_labels <- if (!is.na(name_field)) cpcad_poly[[name_field]] else "CPCAD Site"
+        
+        proxy %>% addPolygons(
+          data = cpcad_poly,
+          color = "#0AA1F4",
+          weight = 1.0,
+          fillColor = "#0AA1F4",
+          fillOpacity = 0.40,
+          label = paste("CPCAD:", cpcad_labels),
+          highlightOptions = highlightOptions(weight = 2, color = "#ffffff", fillOpacity = 0.65)
+        )
+      }
+    }
+    
+    # Render Critical Habitat
+    if (input$showCH && !is.null(ch_data) && nrow(ch_data) > 0) {
+      ch_poly <- ch_data %>% filter(as.character(st_geometry_type(.)) %in% c("POLYGON", "MULTIPOLYGON"))
+      if (nrow(ch_poly) > 0) {
+        ch_names   <- colnames(ch_poly)
+        comm_field <- ch_names[tolower(ch_names) %in% c("commname_e", "commname", "sitename_e")][1]
+        ch_labels  <- if (!is.na(comm_field)) ch_poly[[comm_field]] else "Critical Habitat"
+        
+        proxy %>% addPolygons(
+          data = ch_poly,
+          color = "#d97706",
+          weight = 1.0,
+          fillColor = "#FFCB00",
+          fillOpacity = 0.45,
+          label = paste("CH:", ch_labels),
+          highlightOptions = highlightOptions(weight = 2, color = "#ffffff", fillOpacity = 0.70)
+        )
+      }
+    }
+    
+    # Render KBAs
+    if (input$showKBA && nrow(kba_data) > 0) {
+      proxy %>% addPolygons(
+        data = kba_data,
+        color = "#2f4858",
+        weight = 1.5,
+        fillOpacity = 0.50,
+        fillColor = "#92bf00",
+        layerId = ~kbasiteid,
+        label = ~paste("KBA:", kbasiteid, "-", nationalname),
+        highlightOptions = highlightOptions(weight = 2.5, color = "#ffffff", fillOpacity = 0.75)
       )
-    )
+    }
+    
+    # RECENTER LOGIC: Checks if 'All' or 'Federal / Offshore' is selected
+    if (selected_kba_id() == "All") {
+      if (input$provinceFilter %in% c("All", "Federal / Offshore")) {
+        proxy %>% setView(lng = -96.8, lat = 62.4, zoom = 4)
+      } else if (nrow(kba_data) > 0) {
+        bbox <- st_bbox(kba_data)
+        proxy %>% fitBounds(lng1 = bbox[["xmin"]], lat1 = bbox[["ymin"]], lng2 = bbox[["xmax"]], lat2 = bbox[["ymax"]])
+      }
+    }
   })
   
-  # Observer 2: Highlights selection AND extracts local spatial intersections
+  # --- OBSERVER 2: ACTIVE SELECTION OVERLAYS ---
   observe({
     req(current_data$kba)
     proxy <- leafletProxy("mapElement") %>% clearGroup("selection_highlight")
     
     if (selected_kba_id() != "All") {
-      # Re-verify geometry tracking for master KBA layer
-      kba_master <- current_data$kba
-      geom_col_kba <- attr(kba_master, "sf_column")
-      if (!(geom_col_kba %in% colnames(kba_master))) {
-        true_geom <- colnames(kba_master)[grepl("geometry", colnames(kba_master), ignore.case = TRUE)][1]
-        st_geometry(kba_master) <- true_geom
-      }
-      
-      target_shape <- kba_master %>% 
+      target_kba <- current_data$kba %>% 
         filter(kbasiteid == selected_kba_id()) %>% 
         filter(st_geometry_type(.) %in% c("POLYGON", "MULTIPOLYGON"))
       
-      req(nrow(target_shape) > 0)
+      req(nrow(target_kba) > 0)
       
-      # Re-verify geometry tracking for intersections layer
-      intersections_master <- current_data$intersections
-      geom_col_int <- attr(intersections_master, "sf_column")
-      if (!(geom_col_int %in% colnames(intersections_master))) {
-        true_geom_int <- colnames(intersections_master)[grepl("geometry", colnames(intersections_master), ignore.case = TRUE)][1]
-        st_geometry(intersections_master) <- true_geom_int
-      }
-      
-      target_overlaps <- intersections_master %>% 
-        filter(as.character(kbasiteid) == as.character(selected_kba_id())) %>% 
-        filter(st_geometry_type(.) %in% c("POLYGON", "MULTIPOLYGON"))
-      
-      # Draw distinct dark outline around the primary selected site boundary
       proxy %>% addPolygons(
-        data = target_shape,
-        color = "#3a3426",     # Client Secondary Dark Brown frame boundary
-        weight = 3.0, 
-        fillOpacity = 0.0,      # Clear fill to showcase overlaps clearly inside
+        data = target_kba,
+        color = "#2f4858",
+        weight = 3.0,
+        fillOpacity = 0.0,
         group = "selection_highlight"
       )
       
-      # Layer the cookie-cut pieces inside using the crisp Blue Brand accent
-      if (!is.null(target_overlaps) && nrow(target_overlaps) > 0) {
-        proxy %>% addPolygons(
-          data = target_overlaps,
-          color = "#0AA1F4", 
-          weight = 1.5, 
-          fillColor = "#0AA1F4", # Client Primary Brand Blue
-          fillOpacity = 0.50,
-          group = "selection_highlight",
-          label = ~paste("Overlap with:", NAME_E)
-        )
-      }
-      
-      # Dynamically re-center map view to bounding box coordinates of selection asset
-      bbox <- st_bbox(target_shape)
+      bbox <- st_bbox(target_kba)
       proxy %>% fitBounds(lng1 = bbox[["xmin"]], lat1 = bbox[["ymin"]], lng2 = bbox[["xmax"]], lat2 = bbox[["ymax"]])
     }
   })
   
-  # Observer 3: Highlights the entire uncut CPCAD boundary AND fills the KBA overlap area on table row hover
-  observe({
-    proxy <- leafletProxy("mapElement") %>% clearGroup("cpcad_hover_highlight")
-    
-    # Ensure a row is actively hovered and a KBA selection exists
-    if (is.null(input$hovered_cpcad_row) || selected_kba_id() == "All") return()
-    
-    req(current_data$intersections, current_data$cpcad)
-    target_id <- selected_kba_id()
-    
-    # 1. Isolate the cookie-cut intersection slice representing the active table row
-    hover_table_subset <- current_data$intersections %>% 
-      filter(as.character(kbasiteid) == as.character(target_id)) %>% 
-      filter(st_geometry_type(.) %in% c("POLYGON", "MULTIPOLYGON"))
-    
-    req(nrow(hover_table_subset) > 0)
-    hovered_row_data <- hover_table_subset[input$hovered_cpcad_row + 1, ]
-    
-    # 2. Extract Protected Area Name safely using a non-spatial attribute look-up
-    row_attributes <- hovered_row_data %>% st_drop_geometry()
-    colnames(row_attributes) <- toupper(colnames(row_attributes))
-    pa_name_field <- if("NAME_E" %in% colnames(row_attributes)) "NAME_E" else "name_e"
-    hovered_pa_name <- row_attributes[[pa_name_field]]
-    
-    # 3. Pull uncut geometry out of master storage without mutating master column schemas
-    # We use a character match on the original layer attributes
-    full_uncut_shape <- current_data$cpcad %>% 
-      filter(st_drop_geometry(.) %>% select(matches("^NAME_E$|^name_e$")) %>% pull(1) == hovered_pa_name) %>% 
-      filter(st_geometry_type(.) %in% c("POLYGON", "MULTIPOLYGON"))
-    
-    # 4. Layer Both Highlights onto the Map Proxy
-    # Outline: Draw complete outer boundaries extending everywhere (Hollow Yellow Frame)
-    if (nrow(full_uncut_shape) > 0) {
-      proxy %>% addPolygons(
-        data = full_uncut_shape,
-        color = "#FFCB00",       # Branded Yellow Outline
-        weight = 3.5, 
-        fillColor = "transparent", 
-        group = "cpcad_hover_highlight"
-      )
-    }
-    
-    # Fill: Shade the intersection piece exactly where it hits inside the KBA polygon boundary
-    proxy %>% addPolygons(
-      data = hovered_row_data,
-      stroke = FALSE,            
-      fillColor = "#FFCB00",   # Branded Yellow Fill
-      fillOpacity = 0.55,        
-      group = "cpcad_hover_highlight"
-    )
-  })
-  
-  # Connect Map click boundaries to update sidebar dropdown selectors seamlessly
   observeEvent(input$mapElement_shape_click, {
     click <- input$mapElement_shape_click
-    req(click)
+    req(click, click$id)
     
-    click_id <- click$id
-    # Guard: Ensure the ID is not NULL, not NA, and has exactly 1 element
-    req(click_id, length(click_id) == 1, !is.na(click_id))
-    
-    # Grab the KBA data frame
     kba_df <- current_data$kba
     req(kba_df)
     
-    # Match data types safely
-    if (is.numeric(kba_df$kbasiteid)) {
-      click_id <- as.numeric(click_id)
-    } else {
-      click_id <- as.character(click_id)
-    }
-    
-    # Filter safely using %in% instead of == to prevent size-0 evaluation crashes
-    target_kba <- kba_df %>% 
-      filter(kbasiteid %in% !!click_id) %>% 
-      st_drop_geometry()
+    target_kba <- kba_df %>% filter(as.character(kbasiteid) == as.character(click$id)) %>% st_drop_geometry()
     
     if (nrow(target_kba) > 0) {
       composite_string <- paste0(target_kba$kbasiteid[1], " - ", target_kba$nationalname[1])
@@ -443,274 +450,332 @@ server <- function(input, output, session) {
     }
   })
   
-  # --- SIDEBAR UI GENERATION ---
+  # --- HEADER METRICS UI (OPTIMIZED WITH PRE-COMPUTED DISSOLVED METRICS) ---
   output$kbaSelectionHeader <- renderUI({
+    # Ensure base spatial layer exists before rendering header
+    req(current_data$kba)
+    
     if (selected_kba_id() == "All") {
-      req(current_data$kba)
+      req(filtered_kba())
+      summary_df <- filtered_kba() %>% st_drop_geometry()
+      if (nrow(summary_df) == 0) return(tags$p("No data available for selected criteria."))
       
-      # Clean spatial definitions and drop geometry for blazing fast summarization
-      national_summary <- current_data$kba %>% st_drop_geometry()
+      colnames(summary_df) <- tolower(colnames(summary_df))
       
-      # Calculate national baseline metrics
-      # 1. Total KBA Area across Canada (Summing hectares and converting to km2)
-      total_national_area_ha <- sum(national_summary$KBA_TOTAL_AREA_HA, na.rm = TRUE)
-      total_national_area_km2 <- total_national_area_ha * 0.01
+      header_title <- if (input$provinceFilter == "All") "Canada National Overview" else paste0(input$provinceFilter, " Overview")
+      sub_title    <- if (input$provinceFilter == "All") "Aggregated nationwide conservation statistics." else paste0("Aggregated metrics for ", input$provinceFilter, ".")
       
-      # 2. Total National Proportion of Protection
-      # Weighted average calculation: Sum of individual overlapping areas divided by total area
-      if ("CUMULATIVE_PROPORTION" %in% colnames(national_summary)) {
-        total_protected_area_ha <- sum(national_summary$KBA_TOTAL_AREA_HA * national_summary$CUMULATIVE_PROPORTION, na.rm = TRUE)
-        national_proportion_protected <- (total_protected_area_ha / total_national_area_ha) * 100
+      total_kba_ha  <- sum(summary_df$kba_total_area_ha, na.rm = TRUE)
+      total_kba_km2 <- total_kba_ha * 0.01
+      
+      prot_kba_ha   <- sum(summary_df$protected_area_ha, na.rm = TRUE)
+      kba_cpcad_pct <- if (total_kba_ha > 0) min(100, (prot_kba_ha / total_kba_ha) * 100) else 0
+      
+      ch_kba_ha     <- sum(summary_df$critical_habitat_ha, na.rm = TRUE)
+      kba_ch_pct    <- if (total_kba_ha > 0) min(100, (ch_kba_ha / total_kba_ha) * 100) else 0
+      
+      # Fast Lookup for Pre-Calculated CPCAD Union Area
+      total_cpcad_km2 <- if (is.null(input$provinceFilter) || input$provinceFilter == "All") {
+        current_data$national_cpcad_km2 %||% 0
       } else {
-        national_proportion_protected <- 0
+        prov_summary <- current_data$cpcad_prov_summary
+        if (!is.null(prov_summary) && nrow(prov_summary) > 0) {
+          matched <- prov_summary %>% 
+            filter(tolower(trimws(JUR_CLEAN)) == tolower(trimws(input$provinceFilter)))
+          if (nrow(matched) > 0) sum(matched$CPCAD_KM2, na.rm = TRUE) else 0
+        } else {
+          0
+        }
+      }
+      
+      # Fast Lookup for Pre-Calculated Critical Habitat Union Area
+      total_ch_km2 <- if (is.null(input$provinceFilter) || input$provinceFilter == "All") {
+        current_data$national_ch_km2 %||% 0
+      } else {
+        ch_summary <- current_data$ch_prov_summary
+        if (!is.null(ch_summary) && nrow(ch_summary) > 0) {
+          matched <- ch_summary %>% 
+            filter(tolower(trimws(JUR_CLEAN)) == tolower(trimws(input$provinceFilter)))
+          if (nrow(matched) > 0) sum(matched$CH_KM2, na.rm = TRUE) else 0
+        } else {
+          0
+        }
       }
       
       tags$div(
-        h4("Canada National Overview", style = "font-weight: bold; color: #0f172a; margin-top: 5px;"),
-        p("Aggregated nationwide metrics for all designated Key Biodiversity Areas."),
+        h4(header_title, style = "font-weight: bold; color: #0f172a; margin-top: 5px;"),
+        p(sub_title),
         br(),
-        tags$div(class = "well-protected", style = "background-color: #f8fafc; border-color: #cbd5e1; color: #475569;",
-                 p(tags$strong("Interactive Map Baseline")),
-                 p("Click any boundary polygon on the national map or select an ID using the sidebar input controls to query localized site-level telemetry.")
+        fluidRow(
+          column(4, tags$div(class = "metric-box",
+                             tags$div(class = "metric-title", "Total KBA Area"),
+                             tags$div(class = "metric-value", paste0(format(round(total_kba_km2, 1), big.mark=","), " km²")))),
+          column(4, tags$div(class = "metric-box",
+                             tags$div(class = "metric-title", "KBA - CPCAD Protection"),
+                             tags$div(class = "metric-value", paste0(round(kba_cpcad_pct, 1), " %")))),
+          column(4, tags$div(class = "metric-box",
+                             tags$div(class = "metric-title", "Total CPCAD Area"),
+                             tags$div(class = "metric-value", paste0(format(total_cpcad_km2, big.mark=","), " km²"))))
         ),
         br(),
         fluidRow(
           column(6, tags$div(class = "metric-box",
-                             tags$div(class = "metric-title", "Total KBA Area (Canada)"),
-                             tags$div(class = "metric-value", paste0(format(round(total_national_area_km2, 2), big.mark=","), " km²")))),
+                             tags$div(class = "metric-title", "KBA - Critical Habitat"),
+                             tags$div(class = "metric-value-ch", paste0(round(kba_ch_pct, 1), " %")))),
           column(6, tags$div(class = "metric-box",
-                             tags$div(class = "metric-title", "National Protection Coverage"),
-                             tags$div(class = "metric-value", paste0(round(national_proportion_protected, 1), " %"))))
-        )
+                             tags$div(class = "metric-title", "Total Critical Habitat Area"),
+                             tags$div(class = "metric-value-ch", paste0(format(total_ch_km2, big.mark=","), " km²"))))
+        ),
+        static_footnote_ui
       )
     } else {
-      target_kba <- current_data$kba %>% filter(kbasiteid == selected_kba_id()) %>% st_drop_geometry()
-      req(nrow(target_kba) > 0)
+      # Safe check before filtering
+      target_kba <- current_data$kba %>% 
+        filter(as.character(kbasiteid) == as.character(selected_kba_id())) %>% 
+        st_drop_geometry()
       
-      status_block <- if (target_kba$CUMULATIVE_PROPORTION == 0) {
-        tags$div(class = "well-unprotected",
-                 p(tags$strong("Status: Unprotected")),
-                 p("This designated Key Biodiversity Area does not geographically intersect any recognized CPCAD preservation nodes.")
-        )
-      } else {
-        tags$div(class = "well-protected",
-                 p(tags$strong("Status: Partially/Fully Protected")),
-                 p(paste0("This site features active spatial convergence with intersecting protected layers. ", 
-                          round(target_kba$CUMULATIVE_PROPORTION * 100, 1), "% Protected."))
-        )
-      }
+      req(nrow(target_kba) > 0)
+      colnames(target_kba) <- tolower(colnames(target_kba))
+      
+      kba_km2  <- round(target_kba$kba_total_area_ha * 0.01, 2)
+      prot_pct <- min(100, round(target_kba$cumulative_proportion * 100, 1))
+      ch_pct   <- min(100, round(target_kba$critical_habitat_proportion * 100, 1))
       
       tags$div(
         h4(target_kba$nationalname, style = "font-weight: bold; color: #0f172a; margin-top: 5px;"),
         p(tags$strong("Jurisdiction: "), target_kba$jurisdiction_en, " | ", tags$strong("Site ID: "), target_kba$kbasiteid),
         br(),
-        status_block,
-        br(),
         fluidRow(
-          column(6, tags$div(class = "metric-box",
-                             tags$div(class = "metric-title", "Total Area"),
-                             # Convert Ha to km2 (Ha * 0.01) and change label
-                             tags$div(class = "metric-value", paste0(format(round(target_kba$KBA_TOTAL_AREA_HA * 0.01, 2), big.mark=","), " km²")))),
-          column(6, tags$div(class = "metric-box",
-                             tags$div(class = "metric-title", "Proportion of Protection"),
-                             tags$div(class = "metric-value", paste0(round(target_kba$CUMULATIVE_PROPORTION * 100, 1), " %"))))
-        )
+          column(4, tags$div(class = "metric-box",
+                             tags$div(class = "metric-title", "Total KBA Area"),
+                             tags$div(class = "metric-value", paste0(format(kba_km2, big.mark=","), " km²")))),
+          column(4, tags$div(class = "metric-box",
+                             tags$div(class = "metric-title", "KBA - CPCAD Protection"),
+                             tags$div(class = "metric-value", paste0(prot_pct, " %")))),
+          column(4, tags$div(class = "metric-box",
+                             tags$div(class = "metric-title", "KBA - Critical Habitat"),
+                             tags$div(class = "metric-value-ch", paste0(ch_pct, " %"))))
+        ),
+        static_footnote_ui
       )
     }
   })
   
-  # --- CPCAD BREAKDOWN INVENTORY COMPILING ---
-  output$overlapTable <- renderDT({
-    req(current_data$intersections)
-    
+  # --- TABLE 0: KBA SITES INVENTORY ---
+  output$kbaTable <- renderDT({
+    req(current_data$kba)
     target_id <- selected_kba_id()
     
-    # 1. Drop spatial definitions early and filter based on selection
-    table_data <- current_data$intersections %>% st_drop_geometry()
-    
-    # --- CASE SAFETY SHIELD ---
-    # Convert all incoming column names to uppercase to defeat ESRI casing mismatches
-    colnames(table_data) <- toupper(colnames(table_data))
+    table_data <- current_data$kba %>% st_drop_geometry()
     
     if (target_id != "All") {
-      # Make sure we check for casing-standardized KBASITEID
-      kba_col <- if ("KBASITEID" %in% colnames(table_data)) "KBASITEID" else "kbasiteid"
-      
-      if (is.numeric(table_data[[kba_col]])) {
-        table_data <- table_data %>% filter(.data[[kba_col]] == as.numeric(target_id))
-      } else {
-        table_data <- table_data %>% filter(as.character(.data[[kba_col]]) == as.character(target_id))
-      }
+      table_data <- table_data %>% filter(as.character(kbasiteid) == as.character(target_id))
+    } else if (input$provinceFilter != "All") {
+      table_data <- table_data %>% filter(jurisdiction_en == input$provinceFilter)
     }
     
-    # 2. Return an empty styled table if no data matches
     if (nrow(table_data) == 0) {
-      empty_df <- data.frame(Message = "No overlapping designations found for this site.")
-      return(
-        datatable(
-          empty_df, 
-          options = list(
-            dom = 't',
-            initComplete = JS(
-              "function(settings, json) {",
-              "  $(this.api().table().header()).css({'font-family': 'Open Sans, sans-serif', 'background-color': '#2f4858', 'color': '#ffffff'});",
-              "}"
-            )
-          ), 
-          rownames = FALSE
-        )
-      )
+      return(datatable(data.frame(Message = "No KBA sites found for this selection."), options = list(dom = 't'), rownames = FALSE))
     }
     
-    # 3. Pipeline Safety: Handled safely with guaranteed UPPERCASE column matching
-    if (!"NAME_E" %in% colnames(table_data)) table_data$NAME_E <- "Unknown Protected Area"
-    if (!"IUCN_CAT" %in% colnames(table_data)) table_data$IUCN_CAT <- "8"
-    if (!"TYPE_E" %in% colnames(table_data)) table_data$TYPE_E <- "Unknown"
-    if (!"MGMT_E" %in% colnames(table_data)) table_data$MGMT_E <- "Not Reported"
-    if (!"GOV_TYPE" %in% colnames(table_data)) table_data$GOV_TYPE <- 12 # Fallback to 12 (Not reported)
-    if (!"MPLAN" %in% colnames(table_data)) table_data$MPLAN <- "Not Reported"
-    if (!"MPLAN_REF" %in% colnames(table_data)) table_data$MPLAN_REF <- "No Link"
-    if (!"OVERLAP_AREA_HA" %in% colnames(table_data)) table_data$OVERLAP_AREA_HA <- 0
+    colnames(table_data) <- tolower(colnames(table_data))
     
-    # 3b. Pipeline patch: Dynamically generate PROPORTION_PROTECTED if missing
-    if (!"PROPORTION_PROTECTED" %in% colnames(table_data)) {
-      if ("KBA_TOTAL_AREA_HA" %in% colnames(table_data)) {
-        table_data <- table_data %>% 
-          mutate(PROPORTION_PROTECTED = OVERLAP_AREA_HA / KBA_TOTAL_AREA_HA)
-      } else {
-        table_data$PROPORTION_PROTECTED <- 0
-      }
-    }
-    
-    # 4. Clean transformations & format management plan URLs dynamically
-    table_data <- table_data %>%
+    final_table <- table_data %>%
       mutate(
-        OVERLAP_KM2 = round(as.numeric(OVERLAP_AREA_HA) * 0.01, 2),
-        
-        # Keep raw_prop as a 0.0 - 1.0 decimal so DT can handle it perfectly
-        raw_prop = as.numeric(PROPORTION_PROTECTED),
-        raw_prop = ifelse(is.na(raw_prop) | is.nan(raw_prop), 0, raw_prop),
-        
-        # Map the IUCN codes to their full string labels safely using case_when
-        IUCN_LABEL = case_when(
-          as.character(IUCN_CAT) == "1" ~ "1 - Strict Nature Preserve",
-          as.character(IUCN_CAT) == "2" ~ "2 - Wilderness Area",
-          as.character(IUCN_CAT) == "3" ~ "3 - National Park",
-          as.character(IUCN_CAT) == "4" ~ "4 - National Monument or Feature",
-          as.character(IUCN_CAT) == "5" ~ "5 - Habitat/Species Management Area",
-          as.character(IUCN_CAT) == "6" ~ "6 - Protected Landscape/Seascape",
-          as.character(IUCN_CAT) == "7" ~ "7 - Protected Area with Sustainable Use of Natural Resources",
-          as.character(IUCN_CAT) == "8" ~ "8 - Not Reported",
-          as.character(IUCN_CAT) == "9" ~ "9 - Not Applicable",
-          TRUE                          ~ as.character(IUCN_CAT)
+        `Accreditation` = case_when(
+          grepl("Global|Mondial", kbalevel_en, ignore.case = TRUE)   ~ "Global",
+          grepl("National", kbalevel_en, ignore.case = TRUE)        ~ "National",
+          is.na(kbalevel_en) | kbalevel_en == ""                    ~ "Not Specified",
+          TRUE                                                      ~ as.character(kbalevel_en)
         ),
-        
-        # Map GOV_TYPE domain codes to their respective English displayed values
-        GOV_LABEL = case_match(
-          as.integer(GOV_TYPE),
-          1  ~ "National government",
-          2  ~ "Sub-national government",
-          3  ~ "Government-delegated management",
-          4  ~ "Transboundary governance",
-          5  ~ "Collaborative governance",
-          6  ~ "Joint governance",
-          7  ~ "Individual landowners",
-          8  ~ "Non-profit organizations",
-          9  ~ "For-profit organizations",
-          10 ~ "Indigenous peoples",
-          11 ~ "Local communities",
-          12 ~ "Not reported",
-          .default = "Not reported"
-        ),
-        
-        # Map MPLAN short integers (0 and 1) to Yes and No strings
-        MPLAN_LABEL = case_match(
-          as.integer(MPLAN),
-          0 ~ "No",
-          1 ~ "Yes",
-          .default = "Not Reported" # Safe fallback for NA or blank values
-        ),
-        
-        # Turn valid web URLs in MPLAN_REF into clickable hyperlink anchors safely
-        MPLAN_LINK = case_when(
-          grepl("^https?://", MPLAN_REF, ignore.case = TRUE) ~ 
-            paste0("<a href='", MPLAN_REF, "' target='_blank' style='color: #0AA1F4; font-weight: bold;'>View Plan ⧉</a>"),
-          
-          grepl("^www\\.", MPLAN_REF, ignore.case = TRUE) ~ 
-            paste0("<a href='https://", MPLAN_REF, "' target='_blank' style='color: #0AA1F4; font-weight: bold;'>View Plan ⧉</a>"),
-          
-          TRUE ~ MPLAN_REF
-        )
+        `Total Area (km²)`     = round(kba_total_area_ha * 0.01, 1),
+        `Protected Area (km²)` = round(protected_area_ha * 0.01, 1),
+        `Protection %`         = round(cumulative_proportion * 100, 1),
+        `Critical Habitat %`   = round(critical_habitat_proportion * 100, 1)
       ) %>%
       select(
-        `Protected Area Name` = NAME_E,
-        `Site Type`           = TYPE_E,
-        `Overlap (km²)`       = OVERLAP_KM2,
-        `Coverage %`          = raw_prop,
-        `IUCN Category`       = IUCN_LABEL,
-        `Managing Authority`  = MGMT_E,
-        `Gov Type`            = GOV_LABEL,
-        `Mgmt Plan Status`    = MPLAN_LABEL,   
-        `Mgmt Plan Link`      = MPLAN_LINK
+        `Site ID`              = kbasiteid,
+        `Site Name`            = nationalname,
+        `Jurisdiction`         = jurisdiction_en,
+        `Accreditation`,
+        `Total Area (km²)`,
+        `Protected Area (km²)`,
+        `Protection %`,
+        `Critical Habitat %`
       )
     
-    # 5. Render DataTable with client branding and hover event triggers
-    dt_widget <- datatable(
-      table_data, 
-      escape = FALSE, # Allows HTML anchor tags in MPLAN_LINK to render as clickable links!
-      options = list(
-        pageLength = 5, 
-        scrollX = TRUE, 
-        autoWidth = FALSE, 
-        dom = 'tp',
-        columnDefs = list(
-          list(width = '200px', targets = 0), 
-          list(width = '120px', targets = 1), 
-          list(width = '100px', targets = 2), 
-          list(width = '100px', targets = 3), 
-          list(width = '240px', targets = 4), 
-          list(width = '180px', targets = 5), 
-          list(width = '150px', targets = 6), 
-          list(width = '150px', targets = 7), 
-          list(width = '120px', targets = 8)  
-        ),
-        initComplete = JS(
-          "function(settings, json) {",
-          "  $(this.api().table().header()).css({",
-          "    'font-family': 'Open Sans, sans-serif',",
-          "    'font-weight': '700',",
-          "    'background-color': '#2f4858',", 
-          "    'color': '#ffffff'",
-          "  });",
-          "}"
-        )
-      ), 
-      rownames = FALSE,
-      selection = "none"
-    ) %>% 
-      formatPercentage(columns = "Coverage %", digits = 1)
+    datatable(final_table, options = list(pageLength = 15, scrollX = TRUE, dom = 'tp'), rownames = FALSE)
+  })
+  
+  # --- TABLE 1: CPCAD OVERLAPS INVENTORY ---
+  output$overlapTable <- renderDT({
+    req(current_data$cpcad_overlaps)
+    target_id <- selected_kba_id()
     
-    # Attach client-side hover listener passing row indices to input$hovered_cpcad_row
-    htmlwidgets::onRender(dt_widget, "
-      function(el, x) {
-        var table = $(el).find('table').DataTable();
+    table_sf <- current_data$cpcad_overlaps
+    
+    if (target_id != "All") {
+      table_sf <- table_sf %>% filter(as.character(kbasiteid) == as.character(target_id))
+    } else if (input$provinceFilter != "All") {
+      req(filtered_kba())
+      prov_kba_ids <- unique(as.character(filtered_kba()$kbasiteid))
+      table_sf <- table_sf %>% filter(as.character(kbasiteid) %in% prov_kba_ids)
+    }
+    
+    if (nrow(table_sf) == 0) {
+      return(datatable(data.frame(Message = "No overlapping CPCAD sites found."), options = list(dom = 't'), rownames = FALSE))
+    }
+    
+    table_data <- table_sf %>%
+      mutate(
+        OVERLAP_HA  = as.numeric(st_area(.)) / 10000,
+        OVERLAP_KM2 = round(OVERLAP_HA * 0.01, 2)
+      ) %>%
+      st_drop_geometry()
+    
+    colnames(table_data) <- tolower(colnames(table_data))
+    
+    get_col <- function(df, candidates) {
+      found <- candidates[candidates %in% colnames(df)]
+      if (length(found) > 0) df[[found[1]]] else rep(NA, nrow(df))
+    }
+    
+    table_data <- table_data %>%
+      mutate(
+        kba_ha        = if ("kba_total_area_ha" %in% names(.)) as.numeric(kba_total_area_ha) else NA,
+        raw_pct       = if_else(!is.na(kba_ha) & kba_ha > 0, round((overlap_ha / kba_ha) * 100, 1), 0),
+        coverage_pct  = pmin(100.0, raw_pct),
         
-        // Broadcast R-compatible row index when mouse hovers a row
-        $(el).on('mouseenter', 'tbody tr', function() {
-          var rowIndex = table.row(this).index();
-          if (rowIndex !== undefined) {
-            Shiny.setInputValue('hovered_cpcad_row', rowIndex, {priority: 'event'});
-          }
-        });
+        raw_iucn_val  = get_col(., c("iucn_cat", "iucn")),
+        iucn_label = case_when(
+          as.character(raw_iucn_val) %in% c("1", "Ia") ~ "Ia - Strict Nature Reserve",
+          as.character(raw_iucn_val) %in% c("2", "Ib") ~ "Ib - Wilderness Area",
+          as.character(raw_iucn_val) %in% c("3", "II") ~ "II - National Park",
+          as.character(raw_iucn_val) %in% c("4", "III")~ "III - Natural Monument or Feature",
+          as.character(raw_iucn_val) %in% c("5", "IV") ~ "IV - Habitat/Species Management Area",
+          as.character(raw_iucn_val) %in% c("6", "V")  ~ "V - Protected Landscape/Seascape",
+          as.character(raw_iucn_val) %in% c("7", "VI") ~ "VI - Sustainable Use Area",
+          as.character(raw_iucn_val) %in% c("8", "NR") ~ "Not Reported",
+          as.character(raw_iucn_val) %in% c("9", "NA") ~ "Not Applicable",
+          is.na(raw_iucn_val) | as.character(raw_iucn_val) == "" ~ "Not Reported",
+          TRUE                                         ~ as.character(raw_iucn_val)
+        )
+      )
+    
+    final_table <- table_data %>%
+      select(
+        `Protected Area Name` = any_of(c("name_e", "name", "pa_name_e")),
+        `Site Type`           = any_of(c("type_e", "pa_type", "type")),
+        `Overlap (km²)`       = overlap_km2,
+        `Coverage %`          = coverage_pct,
+        `IUCN Category`       = iucn_label,
+        `Managing Authority`  = any_of(c("mgmt_e", "mgmt", "parent_blk"))
+      )
+    
+    datatable(final_table, options = list(pageLength = 15, scrollX = TRUE, dom = 'tp'), rownames = FALSE)
+  })
+  
+  # --- TABLE 2: CRITICAL HABITAT INVENTORY ---
+  output$chTable <- renderDT({
+    req(current_data$ch_kba_overlaps)
+    target_id <- selected_kba_id()
+    
+    table_data <- current_data$ch_kba_overlaps %>% st_drop_geometry()
+    
+    if (target_id != "All") {
+      table_data <- table_data %>% filter(as.character(kbasiteid) == as.character(target_id))
+    } else if (input$provinceFilter != "All") {
+      req(filtered_kba())
+      prov_kba_ids <- unique(as.character(filtered_kba()$kbasiteid))
+      table_data <- table_data %>% filter(as.character(kbasiteid) %in% prov_kba_ids)
+    }
+    
+    if (nrow(table_data) == 0) {
+      return(datatable(data.frame(Message = "No Critical Habitat boundaries found for this selection."), options = list(dom = 't'), rownames = FALSE))
+    }
+    
+    colnames(table_data) <- make.unique(tolower(colnames(table_data)), sep = "_dup")
+    
+    get_col <- function(df, candidates) {
+      found <- candidates[candidates %in% colnames(df)]
+      if (length(found) > 0) df[[found[1]]] else rep(NA, nrow(df))
+    }
+    
+    table_data <- table_data %>%
+      mutate(
+        raw_sara_status = as.character(get_col(., c("sara_status", "sara_status_1"))),
+        raw_sara_agency = as.character(get_col(., c("sara_agency", "sara_agency_1"))),
+        raw_rd_status   = as.character(get_col(., c("rd_status", "rd_status_1"))),
+        raw_taxon_val   = get_col(., c("taxon", "taxon_1", "taxonomic_group_e")),
         
-        // Wipe state when mouse clears out of table content area
-        $(el).on('mouseleave', 'tbody', function() {
-          Shiny.setInputValue('hovered_cpcad_row', null);
-        });
-      }
-    ")
+        sara_status_label = case_when(
+          raw_sara_status %in% c("1", "Endangered")      ~ "Endangered",
+          raw_sara_status %in% c("2", "Threatened")      ~ "Threatened",
+          raw_sara_status %in% c("3", "Special Concern")  ~ "Special Concern",
+          raw_sara_status %in% c("4", "Extirpated")       ~ "Extirpated",
+          TRUE                                           ~ raw_sara_status
+        ),
+        
+        sara_agency_label = case_when(
+          raw_sara_agency %in% c("1", "ECCC") ~ "Environment and Climate Change Canada",
+          raw_sara_agency %in% c("2", "DFO")  ~ "Fisheries and Oceans Canada",
+          raw_sara_agency %in% c("3", "PCA")  ~ "Parks Canada Agency",
+          TRUE                                ~ raw_sara_agency
+        ),
+        
+        rd_status_label = case_when(
+          raw_rd_status %in% c("1", "Final")    ~ "Final",
+          raw_rd_status %in% c("2", "Proposed") ~ "Proposed",
+          raw_rd_status %in% c("3", "Draft")    ~ "Draft",
+          TRUE                                  ~ raw_rd_status
+        ),
+        
+        taxon_label = case_when(
+          as.character(raw_taxon_val) %in% c("1", "Amphibians", "AM", "Amphibien")           ~ "Amphibians",
+          as.character(raw_taxon_val) %in% c("2", "Birds", "BI", "AV", "Oiseau")             ~ "Birds",
+          as.character(raw_taxon_val) %in% c("3", "Fishes", "FI", "Poisson")                 ~ "Fishes (freshwater)",
+          as.character(raw_taxon_val) %in% c("4", "Invertebrates", "IN", "Invertébré")        ~ "Invertebrates",
+          as.character(raw_taxon_val) %in% c("5", "Lichens", "LI")                            ~ "Lichens",
+          as.character(raw_taxon_val) %in% c("6", "Mammals", "MA", "Mammifère")              ~ "Mammals",
+          as.character(raw_taxon_val) %in% c("7", "Mosses", "MO", "Mousse")                   ~ "Mosses",
+          as.character(raw_taxon_val) %in% c("8", "Reptiles", "RE", "Reptile")               ~ "Reptiles",
+          as.character(raw_taxon_val) %in% c("9", "Vascular Plants", "VP", "PL", "Plante")   ~ "Vascular Plants",
+          as.character(raw_taxon_val) %in% c("10", "Non-vascular Plants", "NV")              ~ "Non-vascular Plants",
+          as.character(raw_taxon_val) %in% c("11", "Molluscs", "MOLL", "Arthropods")         ~ "Molluscs",
+          as.character(raw_taxon_val) %in% c("12", "Fungi", "FU", "Champignons")             ~ "Fungi",
+          as.character(raw_taxon_val) %in% c("13", "Corals", "Sponges", "CO")                ~ "Corals / Sponges",
+          is.na(raw_taxon_val) | as.character(raw_taxon_val) %in% c("", "0", "99")            ~ "Not Specified",
+          TRUE                                                                                ~ as.character(raw_taxon_val)
+        )
+      )
+    
+    final_table <- table_data %>%
+      mutate(
+        site_name_col  = get_col(., c("sitename_e", "sitename", "site_name_e")),
+        comm_name_col  = get_col(., c("commname_e", "commname")),
+        sci_name_col   = get_col(., c("sciname", "scientific_name")),
+        cosewic_col    = get_col(., c("cosewic_id", "cosewicid")),
+        prov_col       = get_col(., c("provterr_e", "provterr")),
+        sensitive_col  = get_col(., c("sensitive_e", "sensitive")),
+        rdoc_name_col  = get_col(., c("rdoc_name_e", "rdoc_name"))
+      ) %>%
+      select(
+        `Site Name`       = site_name_col,
+        `Common Name`     = comm_name_col,
+        `Scientific Name` = sci_name_col,
+        `Taxon`           = taxon_label,
+        `COSEWIC ID`      = cosewic_col,
+        `SARA Status`     = sara_status_label,
+        `Province`        = prov_col,
+        `Sensitive?`      = sensitive_col,
+        `Recovery Agency` = sara_agency_label,
+        `Recovery Doc`    = rdoc_name_col,
+        `Doc Status`      = rd_status_label
+      )
+    
+    datatable(final_table, options = list(pageLength = 10, scrollX = TRUE, dom = 'tp'), rownames = FALSE)
   })
 }
 
-# 5. --- LAUNCH CORE KERNEL ---
+# 5. --- LAUNCH APP ---
 shinyApp(ui, server)

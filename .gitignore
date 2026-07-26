@@ -2,3 +2,4 @@
 .Rhistory
 .RData
 .Ruserdata
+data/cached_compiled_data.rds

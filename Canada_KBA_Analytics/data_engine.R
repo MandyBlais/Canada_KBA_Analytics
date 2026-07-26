@@ -1,12 +1,12 @@
 # ==========================================
-# PART 1 - DATA ENGINE (Sanitized ASCII)
+# PART 1 - DATA ENGINE (OPTIMIZED WITH DISSOLVED METRICS)
 # ==========================================
 
-library(arcgislayers) # Official Esri REST API connector
+library(arcgislayers)
 library(sf)
 library(dplyr)
+library(tidyr)
 
-# Querying ONLY the official, published registry
 KBA_API_URL   <- "https://gis.natureserve.ca/arcgis/rest/services/EBAR-KBA/KBA_Accepted_Sites/FeatureServer/0"
 CPCAD_API_URL <- "https://maps-cartes.ec.gc.ca/arcgis/rest/services/CWS_SCF/CPCAD/MapServer/0"
 CH_API_URL    <- "https://maps-cartes.ec.gc.ca/arcgis/rest/services/CWS_SCF/CriticalHabitat/MapServer/3" 
@@ -14,183 +14,200 @@ CACHE_PATH    <- "data/cached_compiled_data.rds"
 
 refresh_spatial_cache <- function() {
   
-  message("--- Starting Data Update Sequence (Accepted KBAs Only) ---")
-  
-  
+  message("--- Starting Data Update Sequence (KBAs, CPCAD, Critical Habitat) ---")
   
   message("Connecting to endpoints...")
-  
   kba_client   <- arc_open(KBA_API_URL)
-  
   cpcad_client <- arc_open(CPCAD_API_URL)
+  ch_client    <- arc_open(CH_API_URL)
   
-  ch_client <- arc_open(CH_API_URL)
-  
-  
-  # 1. Download accepted KBAs directly in EPSG:3978 from the server
-  
+  # 1. Download accepted KBAs directly in EPSG:3978
   message("Downloading Accepted KBA features (Server-side EPSG:3978)...")
-  
   kba_sf <- arc_select(kba_client, crs = 3978)
-  
-  message(paste("-> Successfully retrieved", nrow(kba_sf), "Accepted KBA site boundaries."))
-  
-  
-  
-  # 2. Create a formal spatial polygon box matching the server's projection
-  
-  message("Calculating spatial query envelopes in EPSG:3978...")
-  
-  kba_bbox_sf <- st_as_sfc(st_bbox(kba_sf))
-  
-  
-  
-  # 3. Pull CPCAD polygons directly in EPSG:3978 matching the envelope
-  
-  message("Streaming spatially filtered CPCAD features...")
-  
-  cpcad_sf <- arc_select(
-    
-    cpcad_client,
-    
-    filter_geom = kba_bbox_sf, 
-    
-    crs = 3978,
-    
-    # ADDED MGMT_E to fields array below:
-    fields = c("PARENT_ID", "ZONE_ID", "NAME_E", "IUCN_CAT", "PA_OECM_DF", "TYPE_E", "OWNER_E", "MGMT_E", "GOV_TYPE", "MPLAN", "MPLAN_REF")
-    
-  )
-  
-  message(paste("-> Successfully retrieved", nrow(cpcad_sf), "intersecting CPCAD records."))
-  
-  
-  
-  # 4. Clean geometry dimensions and repair topologies
-  
-  message("Validating, repairing, and flattening geometry dimensions...")
-  
-  kba_sf   <- kba_sf %>% st_make_valid() %>% st_zm(drop = TRUE)
-  
-  cpcad_sf <- cpcad_sf %>% st_make_valid() %>% st_zm(drop = TRUE)
-  
-  
-  
-  # Calculate baseline total area for every KBA (in Hectares) before intersection
-  
   kba_sf$KBA_TOTAL_AREA_HA <- as.numeric(st_area(kba_sf) / 10000)
   
-  
-  
-  # 5. Perform Geometric Intersection to capture spatial overlap shapes
-  
-  message("Calculating spatial intersections...")
-  
-  intersection_sf <- st_intersection(kba_sf, cpcad_sf)
-  
-  intersection_sf <- intersection_sf[!st_is_empty(intersection_sf), ]
-  
-  
-  
-  # Strictly extract ONLY polygon structures, discarding stray points/lines from edge-grazing
-  
-  if (nrow(intersection_sf) > 0) {
-    
-    message("Extracting pure polygon geometries and discarding stray intersection points...")
-    
-    intersection_sf <- st_collection_extract(intersection_sf, "POLYGON")
-    
-    # Clear out any empty geometries left behind by the extraction process
-    
-    intersection_sf <- intersection_sf[!st_is_empty(intersection_sf), ] 
-    
-  }
-  
-  
-  
-  # Maintain strict 2D polygon features (Double-safety check)
-  
-  if (nrow(intersection_sf) > 0) {
-    
-    intersection_sf <- intersection_sf[which(st_dimension(intersection_sf) == 2), ]
-    
-  }
-  
-  
-  
-  # 6. Aggregate cumulative protection statistics per individual KBA
-  message("Compiling protection metrics...")
-  if (nrow(intersection_sf) > 0) {
-    
-    # Calculate the area of the overlapping pieces in Hectares
-    intersection_sf$OVERLAP_AREA_HA <- as.numeric(st_area(intersection_sf) / 10000)
-    
-    cumulative_protection <- intersection_sf %>%
-      st_drop_geometry() %>%
-      # Calculate the proportion of the parent KBA that this specific piece represents
-      mutate(PROPORTION_PROTECTED = OVERLAP_AREA_HA / KBA_TOTAL_AREA_HA) %>% 
-      group_by(kbasiteid) %>%  
-      summarize(
-        # Sum up all protected pieces inside this KBA, capping at 100% (1.0)
-        CUMULATIVE_PROPORTION = min(1.0, sum(PROPORTION_PROTECTED, na.rm = TRUE)),
-        .groups = "drop"
-      )
-  } else {
-    # Baseline empty table structure fallback if absolutely zero intersections happen across Canada
-    cumulative_protection <- tibble(kbasiteid = character(), CUMULATIVE_PROPORTION = numeric())
-  }
-  
-  
-  # 7. Finalize Master KBA Layer (Ensures ALL accepted sites are retained via left_join)
-  
-  kba_compiled <- kba_sf %>%
-    
-    left_join(cumulative_protection, by = "kbasiteid") %>% 
-    
-    mutate(CUMULATIVE_PROPORTION = coalesce(CUMULATIVE_PROPORTION, 0.0)) %>%
-    
-    st_transform(4326) # Project to WGS84 for Leaflet Map
-  
-  
-  
-  # 8. Optimize CPCAD layer payload size for fast map rendering
-  
-  intersected_cpcad_ids <- unique(intersection_sf$ZONE_ID)
-  
-  cpcad_optimized <- cpcad_sf %>%
-    
-    filter(ZONE_ID %in% intersected_cpcad_ids) %>%
-    
-    st_transform(4326)
-  
-  
-  
-  # Preserve the actual spatial intersection shapes for mapping overlays
-  
-  overlap_layer_4326 <- intersection_sf %>% st_transform(4326)
-  
-  
-  
-  # 9. Save App-Ready Payload
-  
-  output_payload <- list(
-    
-    kba_layer    = kba_compiled,       # Every single official KBA site (Unprotected sites = 0.0)
-    
-    cpcad_layer = cpcad_optimized,     # Lightweight CPCAD base outlines intersecting our target set
-    
-    overlaps    = overlap_layer_4326,  # Precise geometric overlap shapes + attribute tables
-    
-    timestamp   = Sys.time()
-    
+  # 2. Download ALL CPCAD features across Canada with updated schema fields
+  message("Streaming ALL CPCAD features nationwide...")
+  cpcad_sf <- arc_select(
+    cpcad_client,
+    crs = 3978,
+    fields = c(
+      "PARENT_ID", "ZONE_ID", "NAME_E", "IUCN_CAT", "PA_OECM_DF", 
+      "TYPE_E", "OWNER_E", "MGMT_E", "GOV_TYPE", "LOC", "JUR_ID", 
+      "MPLAN", "MPLAN_REF"
+    )
   )
   
+  # 3. Download ALL Critical Habitat features across Canada
+  message("Streaming ALL Critical Habitat (CH) features nationwide...")
+  ch_sf <- arc_select(
+    ch_client,
+    crs = 3978,
+    fields = c(
+      "OBJECTID", "SiteID", "SiteName_E", "COSEWIC_ID", "CommName_E", 
+      "SciName", "Population_E", "SARA_Status", "SARA_Agency", 
+      "ProvTerr_E", "Sensitive_E", "Taxon", "RDoc_Name_E", "RD_Status"
+    )
+  )
   
+  # 4. Clean geometry dimensions and repair topologies
+  message("Validating and repairing geometries...")
+  kba_sf   <- kba_sf %>% st_make_valid() %>% st_zm(drop = TRUE)
+  cpcad_sf <- cpcad_sf %>% st_make_valid() %>% st_zm(drop = TRUE)
+  ch_sf    <- ch_sf %>% st_make_valid() %>% st_zm(drop = TRUE)
+  
+  # ------------------------------------------------------------------
+  # PRE-CALCULATE DISSOLVED METRICS FOR DISSOLVED AREAS (CPCAD & CH)
+  # ------------------------------------------------------------------
+  message("Pre-calculating dissolved national and regional areas for CPCAD and CH...")
+  
+  # A. CPCAD Dissolved Area Calculations
+  cpcad_valid <- st_make_valid(cpcad_sf)
+  national_cpcad_km2 <- round(as.numeric(st_area(st_union(cpcad_valid))) / 1e6, 1)
+  
+  cpcad_prov_summary <- cpcad_valid %>%
+    mutate(
+      RAW_JUR = toupper(trimws(coalesce(as.character(LOC), as.character(JUR_ID)))),
+      JUR_CLEAN = case_when(
+        # Numeric Domain IDs (CPCAD schema order)
+        RAW_JUR %in% c("1", "AB", "ALBERTA", "48")                    ~ "Alberta",
+        RAW_JUR %in% c("2", "BC", "BRITISH COLUMBIA", "59")           ~ "British Columbia",
+        RAW_JUR %in% c("3", "MB", "MANITOBA", "46")                   ~ "Manitoba",
+        RAW_JUR %in% c("4", "NB", "NEW BRUNSWICK", "13")              ~ "New Brunswick",
+        RAW_JUR %in% c("5", "NL", "NEWFOUNDLAND AND LABRADOR", "10") ~ "Newfoundland and Labrador",
+        RAW_JUR %in% c("6", "NT", "NORTHWEST TERRITORIES", "61")      ~ "Northwest Territories",
+        RAW_JUR %in% c("7", "NS", "NOVA SCOTIA", "12")                ~ "Nova Scotia",
+        RAW_JUR %in% c("8", "NU", "NUNAVUT", "62")                    ~ "Nunavut",
+        RAW_JUR %in% c("9", "ON", "ONTARIO", "35")                    ~ "Ontario",
+        RAW_JUR %in% c("10", "PE", "PRINCE EDWARD ISLAND", "11")      ~ "Prince Edward Island",
+        RAW_JUR %in% c("11", "QC", "QUEBEC", "24")                    ~ "Quebec",
+        RAW_JUR %in% c("12", "SK", "SASKATCHEWAN", "47")              ~ "Saskatchewan",
+        RAW_JUR %in% c("13", "YT", "YUKON", "60")                     ~ "Yukon",
+        
+        # Federal / Marine / Offshore Domain Codes
+        RAW_JUR %in% c("14", "15", "16", "17", "18", "19", "20", "21") ~ "Federal Offshore/Marine",
+        TRUE                                                           ~ RAW_JUR
+      )
+    ) %>%
+    group_by(JUR_CLEAN) %>%
+    summarize(geometry = st_union(geometry), .groups = "drop") %>%
+    mutate(CPCAD_KM2 = round(as.numeric(st_area(geometry)) / 1e6, 1)) %>%
+    st_drop_geometry()
+  
+  # B. Critical Habitat Dissolved Area Calculations
+  ch_valid <- st_make_valid(ch_sf)
+  national_ch_km2 <- round(as.numeric(st_area(st_union(ch_valid))) / 1e6, 1)
+  
+  ch_prov_summary <- ch_valid %>%
+    # 1. Split multi-province strings like "MANITOBA; ONTARIO" into separate rows
+    tidyr::separate_rows(ProvTerr_E, sep = ";") %>%
+    mutate(
+      RAW_JUR = toupper(trimws(as.character(ProvTerr_E))),
+      JUR_CLEAN = case_when(
+        RAW_JUR %in% c("ON", "ONTARIO", "35")                    ~ "Ontario",
+        RAW_JUR %in% c("BC", "BRITISH COLUMBIA", "59")           ~ "British Columbia",
+        RAW_JUR %in% c("AB", "ALBERTA", "48")                    ~ "Alberta",
+        RAW_JUR %in% c("QC", "QUEBEC", "24")                     ~ "Quebec",
+        RAW_JUR %in% c("SK", "SASKATCHEWAN", "47")               ~ "Saskatchewan",
+        RAW_JUR %in% c("MB", "MANITOBA", "46")                   ~ "Manitoba",
+        RAW_JUR %in% c("NS", "NOVA SCOTIA", "12")                ~ "Nova Scotia",
+        RAW_JUR %in% c("NB", "NEW BRUNSWICK", "13")              ~ "New Brunswick",
+        RAW_JUR %in% c("NL", "NEWFOUNDLAND AND LABRADOR", "10")  ~ "Newfoundland and Labrador",
+        RAW_JUR %in% c("PE", "PRINCE EDWARD ISLAND", "11")       ~ "Prince Edward Island",
+        RAW_JUR %in% c("YT", "YUKON", "60")                      ~ "Yukon",
+        RAW_JUR %in% c("NT", "NORTHWEST TERRITORIES", "61")      ~ "Northwest Territories",
+        RAW_JUR %in% c("NU", "NUNAVUT", "62")                    ~ "Nunavut",
+        TRUE                                                     ~ RAW_JUR
+      )
+    ) %>%
+    # 2. Group by individual province and dissolve spatial geometries per province
+    group_by(JUR_CLEAN) %>%
+    summarize(geometry = st_union(geometry), .groups = "drop") %>%
+    mutate(CH_KM2 = round(as.numeric(st_area(geometry)) / 1e6, 1)) %>%
+    st_drop_geometry()
+  
+  # 5. Spatial Intersections (KBA x CPCAD)
+  message("Calculating KBA x CPCAD spatial intersections...")
+  intersection_sf <- st_intersection(kba_sf, cpcad_sf)
+  intersection_sf <- intersection_sf[!st_is_empty(intersection_sf), ]
+  if (nrow(intersection_sf) > 0) {
+    intersection_sf <- st_collection_extract(intersection_sf, "POLYGON")
+    intersection_sf <- intersection_sf[!st_is_empty(intersection_sf), ]
+    intersection_sf <- intersection_sf[which(st_dimension(intersection_sf) == 2), ]
+  }
+  
+  # 6. Spatial Intersections (KBA x CH)
+  message("Calculating KBA x Critical Habitat spatial intersections...")
+  ch_kba_intersection_sf <- st_intersection(kba_sf, ch_sf)
+  ch_kba_intersection_sf <- ch_kba_intersection_sf[!st_is_empty(ch_kba_intersection_sf), ]
+  if (nrow(ch_kba_intersection_sf) > 0) {
+    ch_kba_intersection_sf <- st_collection_extract(ch_kba_intersection_sf, "POLYGON")
+    ch_kba_intersection_sf <- ch_kba_intersection_sf[!st_is_empty(ch_kba_intersection_sf), ]
+    ch_kba_intersection_sf <- ch_kba_intersection_sf[which(st_dimension(ch_kba_intersection_sf) == 2), ]
+  }
+  
+  # 7. Protection Metrics (CPCAD inside KBAs - Dissolved per KBA)
+  if (nrow(intersection_sf) > 0) {
+    kba_protection_metrics <- intersection_sf %>%
+      group_by(kbasiteid) %>%
+      summarize(geometry = st_union(geometry), .groups = "drop") %>%
+      mutate(PROTECTED_AREA_HA = as.numeric(st_area(geometry) / 10000)) %>%
+      st_drop_geometry() %>%
+      left_join(kba_sf %>% st_drop_geometry() %>% select(kbasiteid, KBA_TOTAL_AREA_HA), by = "kbasiteid") %>%
+      mutate(CUMULATIVE_PROPORTION = pmin(1.0, PROTECTED_AREA_HA / KBA_TOTAL_AREA_HA)) %>%
+      select(kbasiteid, PROTECTED_AREA_HA, CUMULATIVE_PROPORTION)
+  } else {
+    kba_protection_metrics <- tibble(kbasiteid = character(), PROTECTED_AREA_HA = numeric(), CUMULATIVE_PROPORTION = numeric())
+  }
+  
+  # 8. Critical Habitat Metrics (CH inside KBAs - Dissolved per KBA)
+  if (nrow(ch_kba_intersection_sf) > 0) {
+    kba_ch_metrics <- ch_kba_intersection_sf %>%
+      group_by(kbasiteid) %>%
+      summarize(geometry = st_union(geometry), .groups = "drop") %>%
+      mutate(CRITICAL_HABITAT_HA = as.numeric(st_area(geometry) / 10000)) %>%
+      st_drop_geometry() %>%
+      left_join(kba_sf %>% st_drop_geometry() %>% select(kbasiteid, KBA_TOTAL_AREA_HA), by = "kbasiteid") %>%
+      mutate(CRITICAL_HABITAT_PROPORTION = pmin(1.0, CRITICAL_HABITAT_HA / KBA_TOTAL_AREA_HA)) %>%
+      select(kbasiteid, CRITICAL_HABITAT_HA, CRITICAL_HABITAT_PROPORTION)
+  } else {
+    kba_ch_metrics <- tibble(kbasiteid = character(), CRITICAL_HABITAT_HA = numeric(), CRITICAL_HABITAT_PROPORTION = numeric())
+  }
+  
+  # 9. Compile Master KBA Layer
+  kba_compiled <- kba_sf %>%
+    left_join(kba_protection_metrics, by = "kbasiteid") %>%
+    left_join(kba_ch_metrics, by = "kbasiteid") %>%
+    mutate(
+      PROTECTED_AREA_HA           = coalesce(PROTECTED_AREA_HA, 0.0),
+      CUMULATIVE_PROPORTION       = coalesce(CUMULATIVE_PROPORTION, 0.0),
+      CRITICAL_HABITAT_HA         = coalesce(CRITICAL_HABITAT_HA, 0.0),
+      CRITICAL_HABITAT_PROPORTION = coalesce(CRITICAL_HABITAT_PROPORTION, 0.0)
+    ) %>%
+    st_transform(4326)
+  
+  # 10. Transform FULL CPCAD and CH layers to WGS84 without losing individual features
+  cpcad_optimized     <- cpcad_sf %>% st_transform(4326)
+  ch_optimized        <- ch_sf %>% st_transform(4326)
+  overlap_layer_4326   <- intersection_sf %>% st_transform(4326)
+  ch_kba_overlaps_4326 <- ch_kba_intersection_sf %>% st_transform(4326)
+  
+  # 11. Save Cache Payload with Precomputed Dissolved Summary Metrics
+  output_payload <- list(
+    kba_layer           = kba_compiled,
+    cpcad_layer         = cpcad_optimized,       # Raw shapes for map & site tables
+    ch_layer            = ch_optimized,          # Raw shapes for map & site tables
+    cpcad_overlaps      = overlap_layer_4326,
+    ch_kba_overlaps     = ch_kba_overlaps_4326,
+    national_cpcad_km2  = national_cpcad_km2,    # Precomputed national CPCAD union area
+    national_ch_km2     = national_ch_km2,       # Precomputed national CH union area
+    cpcad_prov_summary  = cpcad_prov_summary,    # Precomputed regional CPCAD union areas
+    ch_prov_summary     = ch_prov_summary,       # Precomputed regional CH union areas
+    timestamp           = Sys.time()
+  )
   
   if(!dir.exists("data")) dir.create("data")
-  
   saveRDS(output_payload, CACHE_PATH)
   
-  message("--- Sync Complete. Accepted KBA master cache refreshed. ---")
-  
+  message("--- Sync Complete. Cache updated with full layers and precomputed dissolved summary areas. ---")
 }
