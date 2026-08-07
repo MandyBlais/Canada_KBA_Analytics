@@ -12,6 +12,9 @@ CPCAD_API_URL <- "https://maps-cartes.ec.gc.ca/arcgis/rest/services/CWS_SCF/CPCA
 CH_API_URL    <- "https://maps-cartes.ec.gc.ca/arcgis/rest/services/CWS_SCF/CriticalHabitat/MapServer/3"
 CACHE_PATH    <- "data/cached_compiled_data.rds"
 
+# PROJ representation of ESRI:102008 (North America Albers Equal Area Conic)
+crs_esri_102008 <- "+proj=aea +lat_1=20 +lat_2=60 +lat_0=40 +lon_0=-96 +x_0=0 +y_0=0 +datum=NAD83 +units=m +no_defs"
+
 refresh_spatial_cache <- function(output_path = CACHE_PATH) {
   
   message("--- Starting Data Update Sequence (KBAs, CPCAD, Critical Habitat) ---")
@@ -24,7 +27,8 @@ refresh_spatial_cache <- function(output_path = CACHE_PATH) {
   # 1. Download accepted KBAs directly in EPSG:3978
   message("Downloading Accepted KBA features (Server-side EPSG:3978)...")
   kba_sf <- arc_select(kba_client, crs = 3978) %>%
-    rename_with(tolower) %>%  # Standardize column names to lowercase
+    st_transform(crs_esri_102008) %>%
+    rename_with(tolower) %>%
     st_zm(drop = TRUE) %>%
     st_make_valid() %>%
     mutate(KBA_TOTAL_AREA_HA = as.numeric(st_area(.)) / 10000)
@@ -40,6 +44,7 @@ refresh_spatial_cache <- function(output_path = CACHE_PATH) {
       "MPLAN", "MPLAN_REF"
     )
   ) %>%
+    st_transform(crs_esri_102008) %>%
     st_zm(drop = TRUE) %>%
     st_make_valid() %>%
     mutate(CPCAD_TOTAL_AREA_HA = as.numeric(st_area(.)) / 10000)
@@ -55,9 +60,11 @@ refresh_spatial_cache <- function(output_path = CACHE_PATH) {
       "ProvTerr_E", "Sensitive_E", "Taxon", "RDoc_Name_E", "RD_Status"
     )
   ) %>%
+    st_transform(crs_esri_102008) %>%
     st_zm(drop = TRUE) %>%
     st_make_valid() %>%
     mutate(CH_TOTAL_AREA_HA = as.numeric(st_area(.)) / 10000)
+
   
   # ------------------------------------------------------------------
   # PRE-CALCULATE DISSOLVED METRICS (EXACT UN-SIMPLIFIED GEOMETRIES)
