@@ -9,10 +9,10 @@ library(tidyr)
 
 KBA_API_URL   <- "https://gis.natureserve.ca/arcgis/rest/services/EBAR-KBA/KBA_Accepted_Sites/FeatureServer/0"
 CPCAD_API_URL <- "https://maps-cartes.ec.gc.ca/arcgis/rest/services/CWS_SCF/CPCAD/MapServer/0"
-CH_API_URL    <- "https://maps-cartes.ec.gc.ca/arcgis/rest/services/CWS_SCF/CriticalHabitat/MapServer/3" 
+CH_API_URL    <- "https://maps-cartes.ec.gc.ca/arcgis/rest/services/CWS_SCF/CriticalHabitat/MapServer/3"
 CACHE_PATH    <- "data/cached_compiled_data.rds"
 
-refresh_spatial_cache <- function() {
+refresh_spatial_cache <- function(output_path = CACHE_PATH) {
   
   message("--- Starting Data Update Sequence (KBAs, CPCAD, Critical Habitat) ---")
   
@@ -131,7 +131,6 @@ refresh_spatial_cache <- function() {
     st_drop_geometry()
   
   # Compute National Critical Habitat Total by dissolving nationwide once
-  # (Or sum provincial dissolved totals if provincial boundaries do not overlap)
   national_ch_km2 <- round(as.numeric(st_area(st_union(st_combine(ch_sf)))) / 1e6, 1)
   
   # 5. Spatial Intersections (KBA x CPCAD)
@@ -284,7 +283,7 @@ refresh_spatial_cache <- function() {
   overlap_layer_4326   <- intersection_sf %>% st_transform(4326)
   ch_kba_overlaps_4326 <- ch_kba_intersection_sf %>% st_transform(4326)
   
-  # Save Cache Payload
+  # Assemble Cache Payload
   output_payload <- list(
     kba_layer           = kba_compiled,
     cpcad_layer         = cpcad_optimized,
@@ -298,8 +297,16 @@ refresh_spatial_cache <- function() {
     timestamp           = Sys.time()
   )
   
-  if(!dir.exists("data")) dir.create("data")
-  saveRDS(output_payload, CACHE_PATH)
+  # Ensure destination directory exists before writing file
+  dir_name <- dirname(output_path)
+  if (!dir.exists(dir_name)) {
+    dir.create(dir_name, recursive = TRUE)
+  }
   
-  message("--- Sync Complete. Patched cache saved directly to ", CACHE_PATH, " ---")
+  # Write compressed .rds file to working directory path
+  saveRDS(output_payload, file = output_path, compress = "xz")
+  
+  message("--- Sync Complete. Patched cache saved directly to ", output_path, " ---")
+  
+  return(output_payload)
 }
