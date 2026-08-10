@@ -104,7 +104,7 @@ kba_theme <- create_theme(
 
 # 3. --- USER INTERFACE DESIGN ---
 ui <- dashboardPage(
-  header = dashboardHeader(title = "Key Biodiversity Areas (KBA) in Canada Analytics Dashboard", titleWidth = 320),
+  header = dashboardHeader(title = "Key Biodiversity Areas (KBAs) in Canada Analytics Dashboard", titleWidth = 320),
   
   sidebar = dashboardSidebar(
     width = 320,
@@ -130,9 +130,9 @@ ui <- dashboardPage(
         
         # Layer Visibility Controls
         h5("Map Layer Toggles", class = "client-subhead", style = "color: #fff; margin-bottom: 10px;"),
-        checkboxInput("showKBA", "Show KBAs (Green)", value = TRUE),
-        checkboxInput("showCPCAD", "Show CPCAD Layers", value = FALSE),
-        checkboxInput("showCH", "Show Critical Habitat Layers", value = FALSE),
+        checkboxInput("showKBA", "Key Biodiversity Areas (KBAs) Layer", value = TRUE),
+        checkboxInput("showCPCAD", "PA & OECM (CPCAD) Layer", value = FALSE),
+        checkboxInput("showCH", "Critical Habitats (CH) Layer", value = FALSE),
         
         hr(style = "border-color: #92BF00; border-width: 2px; margin: 15px 0;"),
         
@@ -233,7 +233,7 @@ ui <- dashboardPage(
               class = "chart-box-container",
               column(
                 width = 12,
-                h4("CPCAD Protection Breakdown", style = "color: #2f4858; font-size: 14px; margin-bottom: 5px;"),
+                h4("PA & OECM Proportions", style = "color: #2f4858; font-size: 14px; margin-bottom: 5px;"),
                 plotlyOutput("kbaProtectionPlot", height = "220px", width = "100%")
               )
             ),
@@ -259,15 +259,15 @@ ui <- dashboardPage(
             DTOutput("kbaTable")
           ),
           tabPanel(
-            "CPCAD Protected Areas",
+            "Protected & OECM Areas",
             br(),
-            p("Individual contributing protected and conserved area shapes.", class = "client-body", style = "color: #3a3426; font-size: 12px; margin-bottom: 12px;"),
+            p("Individual contributing protected and other effective area-based conservation areas.", class = "client-body", style = "color: #3a3426; font-size: 12px; margin-bottom: 12px;"),
             DTOutput("overlapTable")
           ),
           tabPanel(
-            "Critical Habitat (CH)",
+            "Critical Habitat Areas",
             br(),
-            p("Species at Risk Critical Habitat overlapping this site.", class = "client-body", style = "color: #3a3426; font-size: 12px; margin-bottom: 12px;"),
+            p("Species at Risk Critical Habitat overlapping KBA sites.", class = "client-body", style = "color: #3a3426; font-size: 12px; margin-bottom: 12px;"),
             DTOutput("chTable")
           )
         )
@@ -300,7 +300,7 @@ server <- function(input, output, session) {
   # Static footnote block definition
   static_footnote_ui <- tags$p(
     class = "header-footnote",
-    "CPCAD totals reflect terrestrial and inland protected areas per province/territory; offshore marine protected areas are categorized under Federal / Offshore jurisdiction. Critical Habitat and KBA totals include adjacent coastal and marine areas."
+    "CPCAD Protected Areas & Other Effective Area-Based Conservation Measures (PA & OECM) totals reflect terrestrial and inland protected areas per province/territory; offshore marine protected areas are categorized under Federal / Offshore jurisdiction. Critical Habitat and KBA totals include adjacent coastal and marine areas."
   )
   
   observeEvent(input$runSync, {
@@ -361,37 +361,59 @@ server <- function(input, output, session) {
     }
   }, ignoreInit = TRUE)
   
-  
-  # Helper to safely extract single numeric values from a dataframe column
+  # Helper to safely extract numeric values from dataframe columns (case-insensitive)
   safe_extract <- function(df, col_names, default = 0) {
+    if (is.null(df) || nrow(df) == 0) return(default)
+    df_cols_lower <- tolower(colnames(df))
+    
     for (col in col_names) {
-      if (col %in% colnames(df) && !is.null(df[[col]])) {
-        val <- df[[col]][1]
-        if (!is.na(val)) return(val)
+      match_idx <- match(tolower(col), df_cols_lower)
+      if (!is.na(match_idx)) {
+        val <- df[[match_idx]][1]
+        if (!is.na(val) && is.numeric(val)) return(val)
       }
     }
     return(default)
   }
   
-  # --- CHART 1: DONUT CHART FOR KBA PROTECTION & CONSERVATION PROPORTIONS ---
+  # --- CHART 1: FIXED DONUT CHART FOR KBA PROTECTION & CONSERVATION PROPORTIONS ---
   output$kbaProtectionPlot <- renderPlotly({
     req(selected_kba_id() != "All")
     
     target_kba <- current_data$kba %>% 
-      filter(as.character(kbasiteid) == selected_kba_id()) %>% 
+      filter(trimws(as.character(kbasiteid)) == trimws(selected_kba_id())) %>% 
       st_drop_geometry()
     
     req(nrow(target_kba) > 0)
+    
     colnames(target_kba) <- tolower(colnames(target_kba))
     
-    pct_1 <- min(100, round(safe_extract(target_kba, c("cpcad_1_prop", "pa_proportion")) * 100, 1))
-    pct_2 <- min(100, round(safe_extract(target_kba, c("cpcad_2_prop", "oecm_proportion")) * 100, 1))
-    pct_3 <- min(100, round(safe_extract(target_kba, c("cpcad_3_prop")) * 100, 1))
-    pct_4 <- min(100, round(safe_extract(target_kba, c("cpcad_4_prop")) * 100, 1))
-    pct_5 <- min(100, round(safe_extract(target_kba, c("cpcad_5_prop")) * 100, 1))
+    # Safe Extraction across primary and secondary fallback column names
+    raw_1 <- safe_extract(target_kba, c("cpcad_1_prop", "cpcad_1_pct", "cpcad_1_perc", "prop_cpcad_1"))
+    raw_2 <- safe_extract(target_kba, c("cpcad_2_prop", "cpcad_2_pct", "cpcad_2_perc", "prop_cpcad_2"))
+    raw_3 <- safe_extract(target_kba, c("cpcad_3_prop", "cpcad_3_pct", "cpcad_3_perc", "prop_cpcad_3"))
+    raw_4 <- safe_extract(target_kba, c("cpcad_4_prop", "cpcad_4_pct", "cpcad_4_perc", "prop_cpcad_4"))
+    raw_5 <- safe_extract(target_kba, c("cpcad_5_prop", "cpcad_5_pct", "cpcad_5_perc", "prop_cpcad_5"))
     
-    total_cpcad_pct <- min(100, pct_1 + pct_2 + pct_3 + pct_4 + pct_5)
-    unprotected_pct <- max(0, round(100 - total_cpcad_pct, 1))
+    # Fallback checks to pa_proportion / oecm_proportion if individual categories are zero/missing
+    if (sum(c(raw_1, raw_2, raw_3, raw_4, raw_5), na.rm = TRUE) == 0) {
+      raw_1 <- safe_extract(target_kba, c("pa_proportion", "pa_prop"))
+      raw_2 <- safe_extract(target_kba, c("oecm_proportion", "oecm_prop"))
+    }
+    
+    # Auto-detect scale (decimal 0-1 vs percentage 0-100)
+    max_val <- max(c(raw_1, raw_2, raw_3, raw_4, raw_5), na.rm = TRUE)
+    multiplier <- if (max_val <= 1.0 && max_val > 0) 100 else 1
+    
+    pct_1 <- min(100, round(raw_1 * multiplier, 1))
+    pct_2 <- min(100, round(raw_2 * multiplier, 1))
+    pct_3 <- min(100, round(raw_3 * multiplier, 1))
+    pct_4 <- min(100, round(raw_4 * multiplier, 1))
+    pct_5 <- min(100, round(raw_5 * multiplier, 1))
+    
+    total_pa_oecm_pct <- min(100, round(pct_1 + pct_2 + pct_3 + pct_4, 1))
+    total_cpcad_all   <- pct_1 + pct_2 + pct_3 + pct_4 + pct_5
+    unprotected_pct   <- max(0, round(100 - total_cpcad_all, 1))
     
     plot_df <- data.frame(
       Category = c(
@@ -405,16 +427,28 @@ server <- function(input, output, session) {
       Percentage = c(pct_1, pct_2, pct_3, pct_4, pct_5, unprotected_pct),
       Color = c("#0AA1F4", "#FFCB00", "#7dd3fc", "#fde047", "#94a3b8", "#E2E8F0"),
       stringsAsFactors = FALSE
-    ) %>% filter(Percentage > 0)
+    )
+    
+    plot_df_filtered <- plot_df %>% filter(Percentage > 0)
+    
+    # Render fallback slice if zero protection is recorded
+    if (nrow(plot_df_filtered) == 0) {
+      plot_df_filtered <- data.frame(
+        Category = "Unprotected / Other",
+        Percentage = 100,
+        Color = "#E2E8F0",
+        stringsAsFactors = FALSE
+      )
+    }
     
     plot_ly(
-      plot_df, 
+      plot_df_filtered, 
       labels = ~Category, 
       values = ~Percentage, 
       type = 'pie',
       hole = 0.60,
-      domain = list(x = c(0.1, 0.9), y = c(0, 1)), # Bound horizontally within container
-      marker = list(colors = plot_df$Color),
+      domain = list(x = c(0.1, 0.9), y = c(0, 1)),
+      marker = list(colors = plot_df_filtered$Color),
       textinfo = 'none',
       hoverinfo = 'text',
       text = ~paste0("<b>", Category, "</b><br>", Percentage, "%"),
@@ -426,7 +460,7 @@ server <- function(input, output, session) {
         showlegend = FALSE,
         autosize = TRUE,
         annotations = list(
-          text = paste0("<span style='font-size:15px; font-weight:bold; color:#2f4858;'>", round(total_cpcad_pct, 1), "%</span><br><span style='font-size:10px; font-weight:700; color:#64748b;'>TOTAL CPCAD OVERLAP</span>"),
+          text = paste0("<span style='font-size:15px; font-weight:bold; color:#2f4858;'>", total_pa_oecm_pct, "%</span><br><span style='font-size:10px; font-weight:700; color:#64748b;'>TOTAL PA & OECM</span>"),
           x = 0.5, y = 0.5,
           showarrow = FALSE
         ),
@@ -434,7 +468,6 @@ server <- function(input, output, session) {
       ) %>%
       clean_plotly_config()
   })
-  
   
   # --- CHART 2: CRITICAL HABITAT SARA STATUS (CODES 0 - 6) OVERLAP % ---
   output$kbaChStatusPlot <- renderPlotly({
@@ -550,7 +583,7 @@ server <- function(input, output, session) {
           ),
           yaxis = list(
             title = "",
-            automargin = TRUE, # Automatically adjusts spacing for long category labels
+            automargin = TRUE,
             tickfont = list(size = 10, family = "Open Sans, sans-serif")
           ),
           margin = list(l = 10, r = 20, t = 10, b = 35), 
@@ -571,11 +604,11 @@ server <- function(input, output, session) {
         position = "bottomright",
         colors = c("#92BF00", "#0AA1F4", "#FFCB00", "#FF0000", "#FF1493"),
         labels = c(
-          "Key Biodiversity Area", 
-          "CPCAD - Protected",
-          "CPCAD - Conserved",
-          "Critical Habitat - Endangered",
-          "Critical Habitat - Threatened"
+          "KBAs", 
+          "Protected Areas",
+          "OECM Areas",
+          "CH - Endangered",
+          "CH - Threatened"
         ),
         title = "Conservation Layers",
         opacity = 0.85
@@ -689,7 +722,7 @@ server <- function(input, output, session) {
           sf::st_make_valid() %>%
           filter(!st_is_empty(.)) %>% 
           filter(as.character(st_geometry_type(.)) %in% c("POLYGON", "MULTIPOLYGON")) %>%
-          sf::st_cast("POLYGON") # Fix: Explicitly cast MULTIPOLYGON -> POLYGON for leafgl
+          sf::st_cast("POLYGON")
       })
       
       if (nrow(cpcad_poly) > 0) {
@@ -718,7 +751,7 @@ server <- function(input, output, session) {
         if (nrow(cpcad_oecm) > 0) {
           popup_oecm <- if (!is.na(name_field) && name_field %in% names(cpcad_oecm)) {
             pop <- as.character(cpcad_oecm[[name_field]])
-            ifelse(is.na(pop), "Conserved Area (OECM)", pop)
+            ifelse(is.na(pop), "OECM Area", pop)
           } else NULL
           
           proxy %>% leafgl::addGlPolygons(
@@ -733,7 +766,7 @@ server <- function(input, output, session) {
       }
     }
     
-    # --- RENDER CRITICAL HABITAT (SAFEENED & HARDWARE ACCELERATED) ---
+    # --- RENDER CRITICAL HABITAT ---
     if (isTRUE(input$showCH)) {
       target_id <- selected_kba_id()
       
@@ -750,14 +783,13 @@ server <- function(input, output, session) {
             sf::st_make_valid() %>% 
             filter(!st_is_empty(.)) %>% 
             filter(as.character(st_geometry_type(.)) %in% c("POLYGON", "MULTIPOLYGON")) %>%
-            sf::st_cast("POLYGON") # Fix: Explicitly cast MULTIPOLYGON -> POLYGON for leafgl
+            sf::st_cast("POLYGON")
         })
         
         if (nrow(ch_poly) > 0) {
           ch_names   <- colnames(ch_poly)
           comm_field <- ch_names[tolower(ch_names) %in% c("commname_e", "commname", "sitename_e")][1]
           
-          # Clean and format status code to string comparison
           ch_poly <- ch_poly %>% mutate(clean_status = trimws(as.character(SARA_Status)))
           
           ch_endangered <- ch_poly %>% filter(clean_status %in% c("2", "2.0", "Endangered"))
@@ -766,7 +798,7 @@ server <- function(input, output, session) {
           if (nrow(ch_endangered) > 0) {
             popup_end <- if (!is.na(comm_field) && comm_field %in% names(ch_endangered)) {
               pop <- as.character(ch_endangered[[comm_field]])
-              ifelse(is.na(pop), "Endangered Critical Habitat", pop)
+              ifelse(is.na(pop), "Endangered CH", pop)
             } else NULL
             
             proxy %>% leafgl::addGlPolygons(
@@ -782,7 +814,7 @@ server <- function(input, output, session) {
           if (nrow(ch_threatened) > 0) {
             popup_thr <- if (!is.na(comm_field) && comm_field %in% names(ch_threatened)) {
               pop <- as.character(ch_threatened[[comm_field]])
-              ifelse(is.na(pop), "Threatened Critical Habitat", pop)
+              ifelse(is.na(pop), "Threatened CH", pop)
             } else NULL
             
             proxy %>% leafgl::addGlPolygons(
@@ -867,12 +899,12 @@ server <- function(input, output, session) {
   output$kbaSelectionHeader <- renderUI({
     req(current_data$kba)
     
-    COLOR_KBA        <- "#92BF00"  # Olive/Lime Green
-    COLOR_PROTECTED  <- "#0AA1f4"  # Bright Blue
-    COLOR_HABITAT    <- "#d32f2f"  # Red
-    COLOR_CONSERVED  <- "#FFCB00"  # Gold/Yellow
-    COLOR_ENDANGERED <- "#FF0000"  # Red
-    COLOR_THREATENED <- "#FF1493"  # Deep Pink
+    COLOR_KBA        <- "#92BF00"  
+    COLOR_PROTECTED  <- "#0AA1f4"  
+    COLOR_HABITAT    <- "#d32f2f"  
+    COLOR_CONSERVED  <- "#FFCB00"  
+    COLOR_ENDANGERED <- "#FF0000"  
+    COLOR_THREATENED <- "#FF1493"  
     
     if (selected_kba_id() == "All") {
       req(filtered_kba())
@@ -930,13 +962,13 @@ server <- function(input, output, session) {
         fluidRow(
           class = "metric-container",
           column(4, tags$div(class = "metric-box",
-                             tags$div(class = "metric-title", "KBAs Total Area"),
+                             tags$div(class = "metric-title", "KBAs Total Area (TA)"),
                              tags$div(class = "metric-value", style = paste0("color: ", COLOR_KBA, "; font-weight: bold;"), paste0(format(round(total_kba_km2, 1), big.mark=","), " km²")))),
           column(4, tags$div(class = "metric-box",
-                             tags$div(class = "metric-title", "Protected & OECM Total Area"),
+                             tags$div(class = "metric-title", "Protected & OECM TA"),
                              tags$div(class = "metric-value", style = paste0("color: ", COLOR_PROTECTED, "; font-weight: bold;"), paste0(format(round(total_cpcad_km2, 1), big.mark=","), " km²")))),
           column(4, tags$div(class = "metric-box",
-                             tags$div(class = "metric-title", "Critical Habitat Total Area"),
+                             tags$div(class = "metric-title", "Critical Habitat TA"),
                              tags$div(class = "metric-value", style = paste0("color: ", COLOR_HABITAT, "; font-weight: bold;"), paste0(format(round(total_ch_km2, 1), big.mark=","), " km²"))))
         ),
         
@@ -946,17 +978,17 @@ server <- function(input, output, session) {
                              tags$div(class = "metric-title", "KBA - Protected Areas %"),
                              tags$div(class = "metric-value", style = paste0("color: ", COLOR_PROTECTED, "; font-weight: bold;"), paste0(round(kba_pa_pct, 1), " %")))),
           column(6, tags$div(class = "metric-box",
-                             tags$div(class = "metric-title", "KBA - Conserved Areas %"),
+                             tags$div(class = "metric-title", "KBA - OECM Areas %"),
                              tags$div(class = "metric-value", style = paste0("color: ", COLOR_CONSERVED, "; font-weight: bold;"), paste0(round(kba_oecm_pct, 1), " %"))))
         ),
         
         fluidRow(
           class = "metric-container",
           column(6, tags$div(class = "metric-box",
-                             tags$div(class = "metric-title", "KBA - Endangered Critical Habitat %"),
+                             tags$div(class = "metric-title", "KBA - Endangered CH %"),
                              tags$div(class = "metric-value", style = paste0("color: ", COLOR_ENDANGERED, "; font-weight: bold;"), paste0(round(kba_ch_end_pct, 1), " %")))),
           column(6, tags$div(class = "metric-box",
-                             tags$div(class = "metric-title", "KBA - Threatened Critical Habitat %"),
+                             tags$div(class = "metric-title", "KBA - Threatened CH %"),
                              tags$div(class = "metric-value", style = paste0("color: ", COLOR_THREATENED, "; font-weight: bold;"), paste0(round(kba_ch_thr_pct, 1), " %"))))
         ),
         static_footnote_ui
@@ -995,13 +1027,13 @@ server <- function(input, output, session) {
         fluidRow(
           class = "metric-container",
           column(4, tags$div(class = "metric-box",
-                             tags$div(class = "metric-title", "KBAs Total Area"),
+                             tags$div(class = "metric-title", "KBAs Total Area (TA)"),
                              tags$div(class = "metric-value", style = paste0("color: ", COLOR_KBA, "; font-weight: bold;"), paste0(format(round(site_kba_km2, 1), big.mark=","), " km²")))),
           column(4, tags$div(class = "metric-box",
-                             tags$div(class = "metric-title", "Protected & OECM Total Area"),
+                             tags$div(class = "metric-title", "Protected & OECM TA"),
                              tags$div(class = "metric-value", style = paste0("color: ", COLOR_PROTECTED, "; font-weight: bold;"), paste0(format(round((site_pa_ha + site_oecm_ha) * 0.01, 1), big.mark=","), " km²")))),
           column(4, tags$div(class = "metric-box",
-                             tags$div(class = "metric-title", "Critical Habitat Total Area"),
+                             tags$div(class = "metric-title", "Critical Habitat TA"),
                              tags$div(class = "metric-value", style = paste0("color: ", COLOR_HABITAT, "; font-weight: bold;"), paste0(format(round(site_ch_total_km2, 1), big.mark=","), " km²"))))
         ),
         
@@ -1011,17 +1043,17 @@ server <- function(input, output, session) {
                              tags$div(class = "metric-title", "KBA - Protected Areas %"),
                              tags$div(class = "metric-value", style = paste0("color: ", COLOR_PROTECTED, "; font-weight: bold;"), paste0(round(site_pa_pct, 1), " %")))),
           column(6, tags$div(class = "metric-box",
-                             tags$div(class = "metric-title", "KBA - Conserved Areas %"),
+                             tags$div(class = "metric-title", "KBA - OECM Areas %"),
                              tags$div(class = "metric-value", style = paste0("color: ", COLOR_CONSERVED, "; font-weight: bold;"), paste0(round(site_oecm_pct, 1), " %"))))
         ),
         
         fluidRow(
           class = "metric-container",
           column(6, tags$div(class = "metric-box",
-                             tags$div(class = "metric-title", "KBA - Endangered Critical Habitat %"),
+                             tags$div(class = "metric-title", "KBA - Endangered CH %"),
                              tags$div(class = "metric-value", style = paste0("color: ", COLOR_ENDANGERED, "; font-weight: bold;"), paste0(round(site_ch_end_pct, 1), " %")))),
           column(6, tags$div(class = "metric-box",
-                             tags$div(class = "metric-title", "KBA - Threatened Critical Habitat %"),
+                             tags$div(class = "metric-title", "KBA - Threatened CH %"),
                              tags$div(class = "metric-value", style = paste0("color: ", COLOR_THREATENED, "; font-weight: bold;"), paste0(round(site_ch_thr_pct, 1), " %"))))
         ),
         static_footnote_ui
@@ -1085,7 +1117,6 @@ server <- function(input, output, session) {
     datatable(final_table, options = list(pageLength = 15, scrollX = TRUE, dom = 'tp'), rownames = FALSE)
   })
   
-  
   # --- TABLE 1: CPCAD OVERLAPS INVENTORY ---
   output$overlapTable <- renderDT({
     req(current_data$cpcad_overlaps)
@@ -1102,7 +1133,7 @@ server <- function(input, output, session) {
     }
     
     if (nrow(table_sf) == 0) {
-      return(datatable(data.frame(Message = "No overlapping CPCAD sites found."), options = list(dom = 't'), rownames = FALSE))
+      return(datatable(data.frame(Message = "No overlapping PA or OECM sites found."), options = list(dom = 't'), rownames = FALSE))
     }
     
     table_data <- table_sf %>%
@@ -1129,10 +1160,10 @@ server <- function(input, output, session) {
         
         raw_paoecm_val = get_col(., c("pa_oecm_df", "paoecm_df", "pa_oecm")),
         level_of_protection = case_when(
-          as.character(raw_paoecm_val) %in% c("1") ~ "Protected area (PA)",
-          as.character(raw_paoecm_val) %in% c("2") ~ "Other effective area-based conservation measure (OECM)",
-          as.character(raw_paoecm_val) %in% c("3") ~ "Interim - protected area (PA)",
-          as.character(raw_paoecm_val) %in% c("4") ~ "Interim - other effective area-based conservation measure (OECM)",
+          as.character(raw_paoecm_val) %in% c("1") ~ "Protected Area",
+          as.character(raw_paoecm_val) %in% c("2") ~ "Other Effective Area-Based Conservation Measure (OECM)",
+          as.character(raw_paoecm_val) %in% c("3") ~ "Interim - Protected Area",
+          as.character(raw_paoecm_val) %in% c("4") ~ "Interim - OECM",
           as.character(raw_paoecm_val) %in% c("5") ~ "Not applicable",
           is.na(raw_paoecm_val) | as.character(raw_paoecm_val) == "" ~ "Not Reported",
           TRUE                                      ~ as.character(raw_paoecm_val)
@@ -1167,7 +1198,6 @@ server <- function(input, output, session) {
     
     datatable(final_table, options = list(pageLength = 15, scrollX = TRUE, dom = 'tp'), rownames = FALSE)
   })
-  
   
   # --- TABLE 2: CRITICAL HABITAT INVENTORY ---
   output$chTable <- renderDT({
