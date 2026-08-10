@@ -6,13 +6,15 @@ library(arcgislayers)
 library(sf)
 library(dplyr)
 library(tidyr)
+library(here)
 
 KBA_API_URL   <- "https://gis.natureserve.ca/arcgis/rest/services/EBAR-KBA/KBA_Accepted_Sites/FeatureServer/0"
 CPCAD_API_URL <- "https://maps-cartes.ec.gc.ca/arcgis/rest/services/CWS_SCF/CPCAD/MapServer/0"
 CH_API_URL    <- "https://maps-cartes.ec.gc.ca/arcgis/rest/services/CWS_SCF/CriticalHabitat/MapServer/3"
-CACHE_PATH    <- "data/cached_compiled_data.rds"
+CACHE_PATH <- here::here("data", "cached_compiled_data.rds")
 
 crs_esri_102008 <- "+proj=aea +lat_1=20 +lat_2=60 +lat_0=40 +lon_0=-96 +x_0=0 +y_0=0 +datum=NAD83 +units=m +no_defs"
+
 
 refresh_spatial_cache <- function(output_path = CACHE_PATH) {
   
@@ -323,7 +325,7 @@ refresh_spatial_cache <- function(output_path = CACHE_PATH) {
   dir_name <- dirname(output_path)
   if (!dir.exists(dir_name)) dir.create(dir_name, recursive = TRUE)
   
+  message("Saving spatial cache to: ", output_path)
   saveRDS(output_payload, file = output_path, compress = "xz")
-  message("--- Sync Complete. Cache updated cleanly. ---")
-  return(output_payload)
+  message("Cache refreshed successfully at: ", Sys.time())
 }
