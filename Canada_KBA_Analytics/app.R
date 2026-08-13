@@ -11,27 +11,34 @@ library(gfonts)
 library(fresh)
 library(plotly)
 
-CACHE_PATH <- "Canada_KBA_Analytics/data/cached_compiled_data.rds"
+# 1. Increase download timeout for large files on cloud workers
+options(timeout = 600)
 
-# Direct URL to the actual Git LFS binary blob on GitHub
+# Define local target path and remote LFS download URL
+CACHE_PATH <- "data/cached_compiled_data.rds"
 LFS_BINARY_URL <- "https://media.githubusercontent.com/media/MandyBlais/Canada_KBA_Analytics/main/Canada_KBA_Analytics/data/cached_compiled_data.rds"
 
-# Ensure directory exists
-if (!dir.exists("Canada_KBA_Analytics/data")) {
-  dir.create("Canada_KBA_Analytics/data", recursive = TRUE)
+# Ensure local data directory exists
+if (!dir.exists("data")) {
+  dir.create("data", recursive = TRUE)
 }
 
-# Delete file if it's a small Git LFS text pointer (< 1 MB)
+# Remove invalid/pointer file if present (< 1 MB)
 if (file.exists(CACHE_PATH) && file.info(CACHE_PATH)$size < 1000000) {
   file.remove(CACHE_PATH)
 }
 
-# Download full binary from media.githubusercontent.com if missing
+# Safely attempt download if file isn't present
 if (!file.exists(CACHE_PATH)) {
-  message("Downloading full 113MB LFS binary dataset from GitHub...")
-  download.file(LFS_BINARY_URL, CACHE_PATH, mode = "wb")
+  message("Downloading binary RDS dataset from GitHub LFS CDN...")
+  tryCatch({
+    download.file(LFS_BINARY_URL, CACHE_PATH, mode = "wb", quiet = FALSE)
+  }, error = function(e) {
+    stop("Failed to download RDS file from GitHub: ", e$message)
+  })
 }
 
+# Load cached data
 kba_data <- readRDS(CACHE_PATH)
 
 # Helper function to generate dropdown province/territory choices safely
