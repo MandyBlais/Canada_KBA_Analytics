@@ -1,9 +1,8 @@
-# PART 2 - SHINY APP DASHBOARD INTERFACE (WEBGL ENHANCED VIA LEAFGL)
+# PART 2 - SHINY APP DASHBOARD INTERFACE (MAPGL / WEBGPU / MAPBOX GL ENHANCED)
 
 library(shiny)
 library(shinydashboard)
-library(leaflet)
-library(leafgl) # WebGL hardware-accelerated polygon rendering
+library(mapgl)
 library(sf)
 library(dplyr)
 library(DT)
@@ -66,6 +65,15 @@ clean_plotly_config <- function(p) {
       "toggleSpikelines"
     )
   )
+}
+
+# Ensure sf layer objects are transformed to WGS 84 (EPSG:4326) for mapgl
+prep_sf_4326 <- function(sf_obj) {
+  if (is.null(sf_obj) || nrow(sf_obj) == 0) return(NULL)
+  if (st_crs(sf_obj) != st_crs(4326)) {
+    sf_obj <- st_transform(sf_obj, 4326)
+  }
+  sf_obj
 }
 
 # 1. Gracefully load cache on initialization
@@ -211,7 +219,7 @@ ui <- dashboardPage(
         width = 6,
         box(
           title = "National Conservation Baseline Map", width = NULL, solidHeader = TRUE, status = "primary",
-          leafglOutput("mapElement", height = "780px")
+          mapboxglOutput("mapElement", height = "780px")
         )
       ),
       
@@ -593,62 +601,51 @@ server <- function(input, output, session) {
     }
   })
   
-  # --- LEAFLET MAP INITIALIZATION ---
-  output$mapElement <- renderLeaflet({
+  # --- MAPGL MAP INITIALIZATION ---
+  output$mapElement <- renderMapboxgl({
     req(current_data$kba)
     
-    leaflet(options = leafletOptions(preferCanvas = TRUE)) %>% 
-      addProviderTiles(providers$CartoDB.Positron) %>%
-      setView(lng = -96.8, lat = 62.4, zoom = 4) %>%
-      addLegend(
-        position = "bottomright",
-        colors = c("#92BF00", "#0AA1F4", "#FFCB00", "#FF0000", "#FF1493"),
-        labels = c(
+    mapboxgl(
+      style = mapbox_style("light"),
+      center = c(-96.8, 62.4),
+      zoom = 3.2
+    ) %>%
+      add_categorical_legend(
+        legend_title = "Conservation Layers",
+        values = c(
           "KBAs", 
           "Protected Areas",
           "OECM Areas",
           "CH - Endangered",
           "CH - Threatened"
         ),
-        title = "Conservation Layers",
-        opacity = 0.85
-      ) %>%
-      htmlwidgets::onRender("
-        function(el, x) {
-          var legend = document.querySelector('.leaflet-control-legend');
-          if (legend) {
-            legend.style.fontFamily = 'Open Sans, sans-serif';
-            legend.style.fontWeight = '300';
-            legend.style.backgroundColor = 'rgba(255, 255, 255, 0.95)';
-            legend.style.border = '2px solid #2f4858';
-            legend.style.borderRadius = '6px';
-            var title = legend.querySelector('strong');
-            if (title) {
-              title.style.fontFamily = 'rift, Impact, sans-serif';
-              title.style.fontWeight = '700';
-              title.style.textTransform = 'uppercase';
-              title.style.color = '#2f4858';
-            }
-          }
-        }
-      ")
+        colors = c("#92BF00", "#0AA1F4", "#FFCB00", "#FF0000", "#FF1493"),
+        position = "bottom-right"
+      )
   })
   
-  # --- OBSERVER 1: MAP LAYERS (HARDWARE ACCELERATED VIA LEAFGL) ---
+  # --- OBSERVER 1: MAP LAYERS VIA MAPGL ---
   observe({
     kba_raw <- filtered_kba()
     req(kba_raw)
     if (is.null(kba_raw) || nrow(kba_raw) == 0) return()
     
-    proxy <- leafletProxy("mapElement") %>% 
-      clearShapes() %>%
-      clearGroup("CPCAD_PA") %>%
-      clearGroup("CPCAD_OECM") %>%
-      clearGroup("CH_Endangered") %>%
-      clearGroup("CH_Threatened") %>%
-      leafgl::clearGlLayers()
+    proxy <- mapboxgl_proxy("mapElement") %>% 
+      clear_layer("CPCAD_PA_fill") %>%
+      clear_layer("CPCAD_PA_line") %>%
+      clear_layer("CPCAD_OECM_fill") %>%
+      clear_layer("CPCAD_OECM_line") %>%
+      clear_layer("CH_Endangered_fill") %>%
+      clear_layer("CH_Endangered_line") %>%
+      clear_layer("CH_Threatened_fill") %>%
+      clear_layer("CH_Threatened_line") %>%
+      clear_layer("KBA_layer_fill") %>%
+      clear_layer("KBA_layer_line")
     
-    kba_data <- kba_raw %>% filter(as.character(st_geometry_type(.)) %in% c("POLYGON", "MULTIPOLYGON"))
+    kba_data <- kba_raw %>% 
+      filter(as.character(st_geometry_type(.)) %in% c("POLYGON", "MULTIPOLYGON")) %>%
+      prep_sf_4326()
+    
     selected_prov <- input$provinceFilter
     
     # --- CPCAD PROVINCIAL FILTERING ---
@@ -722,10 +719,10 @@ server <- function(input, output, session) {
           sf::st_make_valid() %>%
           filter(!st_is_empty(.)) %>% 
           filter(as.character(st_geometry_type(.)) %in% c("POLYGON", "MULTIPOLYGON")) %>%
-          sf::st_cast("POLYGON")
+          prep_sf_4326()
       })
       
-      if (nrow(cpcad_poly) > 0) {
+      if (!is.null(cpcad_poly) && nrow(cpcad_poly) > 0) {
         cpcad_names <- colnames(cpcad_poly)
         name_field  <- cpcad_names[tolower(cpcad_names) %in% c("name_e", "name", "pa_name_e")][1]
         
@@ -733,34 +730,22 @@ server <- function(input, output, session) {
         cpcad_oecm <- cpcad_poly %>% filter(as.character(PA_OECM_DF) %in% c("2", "4"))
         
         if (nrow(cpcad_pa) > 0) {
-          popup_pa <- if (!is.na(name_field) && name_field %in% names(cpcad_pa)) {
-            pop <- as.character(cpcad_pa[[name_field]])
-            ifelse(is.na(pop), "Protected Area", pop)
-          } else NULL
-          
-          proxy %>% leafgl::addGlPolygons(
-            data = cpcad_pa,
-            color = "#0AA1F4",
-            fillColor = "#0AA1F4",
-            fillOpacity = 0.40,
-            group = "CPCAD_PA",
-            popup = popup_pa
+          proxy %>% add_fill_layer(
+            id = "CPCAD_PA_fill",
+            source = cpcad_pa,
+            fill_color = "#0AA1F4",
+            fill_opacity = 0.40,
+            tooltip = if (!is.na(name_field) && name_field %in% names(cpcad_pa)) name_field else NULL
           )
         }
         
         if (nrow(cpcad_oecm) > 0) {
-          popup_oecm <- if (!is.na(name_field) && name_field %in% names(cpcad_oecm)) {
-            pop <- as.character(cpcad_oecm[[name_field]])
-            ifelse(is.na(pop), "OECM Area", pop)
-          } else NULL
-          
-          proxy %>% leafgl::addGlPolygons(
-            data = cpcad_oecm,
-            color = "#FFCB00",
-            fillColor = "#FFCB00",
-            fillOpacity = 0.40,
-            group = "CPCAD_OECM",
-            popup = popup_oecm
+          proxy %>% add_fill_layer(
+            id = "CPCAD_OECM_fill",
+            source = cpcad_oecm,
+            fill_color = "#FFCB00",
+            fill_opacity = 0.40,
+            tooltip = if (!is.na(name_field) && name_field %in% names(cpcad_oecm)) name_field else NULL
           )
         }
       }
@@ -783,10 +768,10 @@ server <- function(input, output, session) {
             sf::st_make_valid() %>% 
             filter(!st_is_empty(.)) %>% 
             filter(as.character(st_geometry_type(.)) %in% c("POLYGON", "MULTIPOLYGON")) %>%
-            sf::st_cast("POLYGON")
+            prep_sf_4326()
         })
         
-        if (nrow(ch_poly) > 0) {
+        if (!is.null(ch_poly) && nrow(ch_poly) > 0) {
           ch_names   <- colnames(ch_poly)
           comm_field <- ch_names[tolower(ch_names) %in% c("commname_e", "commname", "sitename_e")][1]
           
@@ -796,61 +781,52 @@ server <- function(input, output, session) {
           ch_threatened <- ch_poly %>% filter(clean_status %in% c("3", "3.0", "Threatened"))
           
           if (nrow(ch_endangered) > 0) {
-            popup_end <- if (!is.na(comm_field) && comm_field %in% names(ch_endangered)) {
-              pop <- as.character(ch_endangered[[comm_field]])
-              ifelse(is.na(pop), "Endangered CH", pop)
-            } else NULL
-            
-            proxy %>% leafgl::addGlPolygons(
-              data = ch_endangered,
-              color = "#FF0000",
-              fillColor = "#FF0000",
-              fillOpacity = 0.50,
-              group = "CH_Endangered",
-              popup = popup_end
+            proxy %>% add_fill_layer(
+              id = "CH_Endangered_fill",
+              source = ch_endangered,
+              fill_color = "#FF0000",
+              fill_opacity = 0.50,
+              tooltip = if (!is.na(comm_field) && comm_field %in% names(ch_endangered)) comm_field else NULL
             )
           }
           
           if (nrow(ch_threatened) > 0) {
-            popup_thr <- if (!is.na(comm_field) && comm_field %in% names(ch_threatened)) {
-              pop <- as.character(ch_threatened[[comm_field]])
-              ifelse(is.na(pop), "Threatened CH", pop)
-            } else NULL
-            
-            proxy %>% leafgl::addGlPolygons(
-              data = ch_threatened,
-              color = "#FF1493",
-              fillColor = "#FF1493",
-              fillOpacity = 0.50,
-              group = "CH_Threatened",
-              popup = popup_thr
+            proxy %>% add_fill_layer(
+              id = "CH_Threatened_fill",
+              source = ch_threatened,
+              fill_color = "#FF1493",
+              fill_opacity = 0.50,
+              tooltip = if (!is.na(comm_field) && comm_field %in% names(ch_threatened)) comm_field else NULL
             )
           }
         }
       }
     }
     
-    # --- RENDER KBAS (STANDARD LEAFLET) ---
-    if (input$showKBA && nrow(kba_data) > 0) {
-      proxy %>% addPolygons(
-        data = kba_data,
-        color = "#2f4858",
-        weight = 1.5,
-        fillOpacity = 0.50,
-        fillColor = "#92BF00",
-        layerId = ~kbasiteid,
-        label = ~paste("KBA:", kbasiteid, "-", nationalname),
-        highlightOptions = highlightOptions(weight = 2.5, color = "#ffffff", fillOpacity = 0.75)
-      )
+    # --- RENDER KBAS ---
+    if (input$showKBA && !is.null(kba_data) && nrow(kba_data) > 0) {
+      proxy %>% 
+        add_fill_layer(
+          id = "KBA_layer_fill",
+          source = kba_data,
+          fill_color = "#92BF00",
+          fill_opacity = 0.50,
+          tooltip = "nationalname"
+        ) %>%
+        add_line_layer(
+          id = "KBA_layer_line",
+          source = kba_data,
+          line_color = "#2f4858",
+          line_width = 1.5
+        )
     }
     
     # --- RECENTER MAP ---
     if (selected_kba_id() == "All") {
       if (input$provinceFilter %in% c("All", "Federal / Offshore")) {
-        proxy %>% setView(lng = -96.8, lat = 62.4, zoom = 4)
-      } else if (nrow(kba_data) > 0) {
-        bbox <- st_bbox(kba_data)
-        proxy %>% fitBounds(lng1 = bbox[["xmin"]], lat1 = bbox[["ymin"]], lng2 = bbox[["xmax"]], lat2 = bbox[["ymax"]])
+        proxy %>% set_view(center = c(-96.8, 62.4), zoom = 3.2)
+      } else if (!is.null(kba_data) && nrow(kba_data) > 0) {
+        proxy %>% fit_bounds(kba_data, animate = TRUE)
       }
     }
   })
@@ -858,40 +834,41 @@ server <- function(input, output, session) {
   # --- OBSERVER 2: ACTIVE SELECTION OVERLAYS ---
   observe({
     req(current_data$kba)
-    proxy <- leafletProxy("mapElement") %>% clearGroup("selection_highlight")
+    proxy <- mapboxgl_proxy("mapElement") %>% clear_layer("selection_highlight_line")
     
     if (selected_kba_id() != "All") {
       target_kba <- current_data$kba %>% 
         filter(as.character(kbasiteid) == selected_kba_id()) %>% 
-        filter(as.character(st_geometry_type(.)) %in% c("POLYGON", "MULTIPOLYGON"))
+        filter(as.character(st_geometry_type(.)) %in% c("POLYGON", "MULTIPOLYGON")) %>%
+        prep_sf_4326()
       
-      req(nrow(target_kba) > 0)
+      req(!is.null(target_kba) && nrow(target_kba) > 0)
       
-      proxy %>% addPolygons(
-        data = target_kba,
-        color = "#2f4858",
-        weight = 3.0,
-        fillOpacity = 0.0,
-        group = "selection_highlight"
+      proxy %>% add_line_layer(
+        id = "selection_highlight_line",
+        source = target_kba,
+        line_color = "#2f4858",
+        line_width = 3.0
       )
       
-      bbox <- st_bbox(target_kba)
-      proxy %>% fitBounds(lng1 = bbox[["xmin"]], lat1 = bbox[["ymin"]], lng2 = bbox[["xmax"]], lat2 = bbox[["ymax"]])
+      proxy %>% fit_bounds(target_kba, animate = TRUE)
     }
   })
   
-  observeEvent(input$mapElement_shape_click, {
-    click <- input$mapElement_shape_click
-    req(click, click$id)
+  observeEvent(input$mapElement_layer_click, {
+    click <- input$mapElement_layer_click
+    req(click)
     
     kba_df <- current_data$kba
     req(kba_df)
     
-    target_kba <- kba_df %>% filter(as.character(kbasiteid) == as.character(click$id)) %>% st_drop_geometry()
-    
-    if (nrow(target_kba) > 0) {
-      composite_string <- paste0(target_kba$kbasiteid[1], " - ", target_kba$nationalname[1])
-      updateSelectInput(session, "kbaFilter", selected = composite_string)
+    # Handle click on feature layer
+    if (!is.null(click$feature$kbasiteid)) {
+      target_kba <- kba_df %>% filter(as.character(kbasiteid) == as.character(click$feature$kbasiteid)) %>% st_drop_geometry()
+      if (nrow(target_kba) > 0) {
+        composite_string <- paste0(target_kba$kbasiteid[1], " - ", target_kba$nationalname[1])
+        updateSelectInput(session, "kbaFilter", selected = composite_string)
+      }
     }
   })
   
