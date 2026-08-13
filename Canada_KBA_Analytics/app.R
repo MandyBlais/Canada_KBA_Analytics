@@ -1,4 +1,4 @@
-# PART 2 - SHINY APP DASHBOARD INTERFACE (MAPGL / WEBGPU / MAPBOX GL ENHANCED)
+# PART 2 - SHINY APP DASHBOARD INTERFACE (MAPLIBRE GL / WEBGPU ENHANCED)
 
 library(shiny)
 library(shinydashboard)
@@ -219,7 +219,7 @@ ui <- dashboardPage(
         width = 6,
         box(
           title = "National Conservation Baseline Map", width = NULL, solidHeader = TRUE, status = "primary",
-          mapboxglOutput("mapElement", height = "780px")
+          maplibreOutput("mapElement", height = "780px")
         )
       ),
       
@@ -601,12 +601,12 @@ server <- function(input, output, session) {
     }
   })
   
-  # --- MAPGL MAP INITIALIZATION ---
-  output$mapElement <- renderMapboxgl({
+  # --- MAPLIBRE GL MAP INITIALIZATION ---
+  output$mapElement <- renderMaplibre({
     req(current_data$kba)
     
-    mapboxgl(
-      style = mapbox_style("light"),
+    maplibre(
+      style = carto_style("voyager"),
       center = c(-96.8, 62.4),
       zoom = 3.2
     ) %>%
@@ -624,13 +624,13 @@ server <- function(input, output, session) {
       )
   })
   
-  # --- OBSERVER 1: MAP LAYERS VIA MAPGL ---
+  # --- OBSERVER 1: MAP LAYERS VIA MAPLIBRE GL ---
   observe({
     kba_raw <- filtered_kba()
     req(kba_raw)
     if (is.null(kba_raw) || nrow(kba_raw) == 0) return()
     
-    proxy <- mapboxgl_proxy("mapElement") %>% 
+    proxy <- maplibre_proxy("mapElement") %>%
       clear_layer("CPCAD_PA_fill") %>%
       clear_layer("CPCAD_PA_line") %>%
       clear_layer("CPCAD_OECM_fill") %>%
@@ -834,7 +834,7 @@ server <- function(input, output, session) {
   # --- OBSERVER 2: ACTIVE SELECTION OVERLAYS ---
   observe({
     req(current_data$kba)
-    proxy <- mapboxgl_proxy("mapElement") %>% clear_layer("selection_highlight_line")
+    proxy <- maplibre_proxy("mapElement") %>% clear_layer("selection_highlight_line")
     
     if (selected_kba_id() != "All") {
       target_kba <- current_data$kba %>% 

@@ -15,7 +15,6 @@ CACHE_PATH <- here::here("data", "cached_compiled_data.rds")
 
 crs_esri_102008 <- "+proj=aea +lat_1=20 +lat_2=60 +lat_0=40 +lon_0=-96 +x_0=0 +y_0=0 +datum=NAD83 +units=m +no_defs"
 
-
 refresh_spatial_cache <- function(output_path = CACHE_PATH) {
   
   message("--- Starting Data Update Sequence (KBAs, CPCAD, Critical Habitat) ---")
