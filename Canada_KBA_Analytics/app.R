@@ -1,4 +1,4 @@
-# PART 2 - SHINY APP DASHBOARD INTERFACE (MAPLIBRE GL / WEBGPU ENHANCED)
+# PART 2 - SHINY APP DASHBOARD INTERFACE (LEAFLET ENHANCED)
 
 options(repos = c(CRAN = "https://cran.rstudio.com/"))
 
@@ -6,6 +6,7 @@ library(shiny)
 library(shinydashboard)
 library(sf)
 library(dplyr)
+library(leaflet)
 library(DT)
 library(gfonts)
 library(fresh)
@@ -85,7 +86,7 @@ clean_plotly_config <- function(p) {
   )
 }
 
-# Enhanced spatial prepper ensuring clean MULTIPOLYGON geometries for GeoJSON serialization
+# Enhanced spatial prepper ensuring clean MULTIPOLYGON geometries for spatial display
 prep_sf_4326 <- function(sf_obj) {
   if (is.null(sf_obj) || nrow(sf_obj) == 0) return(NULL)
   
@@ -103,14 +104,6 @@ prep_sf_4326 <- function(sf_obj) {
     sf_clean <- st_transform(sf_clean, 4326)
   }
   sf_clean
-}
-
-# Helper to safely clear both layer and source from maplibre_proxy
-safe_clear_map_layer <- function(proxy, layer_id) {
-  try({
-    remove_layer(proxy, layer_id)
-    remove_source(proxy, layer_id)
-  }, silent = TRUE)
 }
 
 # Safe column extraction helper
@@ -262,7 +255,7 @@ ui <- dashboardPage(
         width = 6,
         box(
           title = "National Conservation Baseline Map", width = NULL, solidHeader = TRUE, status = "primary",
-          maplibreOutput("mapElement", height = "780px")
+          leafletOutput("mapElement", height = "780px")
         )
       ),
       
@@ -643,57 +636,24 @@ server <- function(input, output, session) {
     }
   })
   
-  # --- MAPLIBRE GL MAP INITIALIZATION ---
-  output$mapElement <- renderMaplibre({
-    req(current_data$kba)
-    
-    initial_kba <- prep_kba_4326()
-    
-    m <- maplibre(
-      style = carto_style("voyager"),
-      center = c(-96.8, 62.4),
-      zoom = 3.2
-    ) %>%
-      add_categorical_legend(
-        legend_title = "Conservation Layers",
-        values = c(
-          "KBAs", 
-          "Protected Areas",
-          "OECM Areas",
-          "CH - Endangered",
-          "CH - Threatened"
-        ),
+  # --- LEAFLET MAP INITIALIZATION ---
+  output$mapElement <- renderLeaflet({
+    leaflet() %>%
+      addProviderTiles(providers$CartoDB.Positron) %>%
+      setView(lng = -96.8, lat = 62.4, zoom = 3.2) %>%
+      addLegend(
+        position = "bottomright",
         colors = c("#92BF00", "#0AA1F4", "#FFCB00", "#FF0000", "#FF1493"),
-        position = "bottom-right"
+        labels = c("KBAs", "Protected Areas", "OECM Areas", "CH - Endangered", "CH - Threatened"),
+        title = "Conservation Layers",
+        opacity = 0.8
       )
-    
-    if (!is.null(initial_kba) && nrow(initial_kba) > 0) {
-      m <- m %>%
-        add_fill_layer(
-          id = "KBA_layer_fill",
-          source = initial_kba,
-          fill_color = "#92BF00",
-          fill_opacity = 0.50,
-          tooltip = "nationalname"
-        ) %>%
-        add_line_layer(
-          id = "KBA_layer_line",
-          source = initial_kba,
-          line_color = "#2f4858",
-          line_width = 1.5
-        )
-    }
-    
-    m
   })
   
   # --- OBSERVER 1: KBA LAYER UPDATES ---
   observeEvent(list(input$showKBA, input$provinceFilter, current_data$kba), {
-    req(input$mapElement)
-    proxy <- maplibre_proxy("mapElement")
-    
-    safe_clear_map_layer(proxy, "KBA_layer_fill")
-    safe_clear_map_layer(proxy, "KBA_layer_line")
+    proxy <- leafletProxy("mapElement")
+    proxy %>% clearGroup("KBA_layer")
     
     kba_raw <- filtered_kba()
     if (is.null(kba_raw) || nrow(kba_raw) == 0) return()
@@ -702,29 +662,23 @@ server <- function(input, output, session) {
     
     if (isTRUE(input$showKBA) && !is.null(kba_data) && nrow(kba_data) > 0) {
       proxy %>% 
-        add_fill_layer(
-          id = "KBA_layer_fill",
-          source = kba_data,
-          fill_color = "#92BF00",
-          fill_opacity = 0.50,
-          tooltip = "nationalname"
-        ) %>%
-        add_line_layer(
-          id = "KBA_layer_line",
-          source = kba_data,
-          line_color = "#2f4858",
-          line_width = 1.5
+        addPolygons(
+          data = kba_data,
+          group = "KBA_layer",
+          layerId = ~as.character(kbasiteid),
+          fillColor = "#92BF00",
+          fillOpacity = 0.50,
+          color = "#2f4858",
+          weight = 1.5,
+          popup = ~paste0("<strong>KBA Site:</strong> ", nationalname, "<br><strong>ID:</strong> ", kbasiteid)
         )
     }
-  }, ignoreInit = TRUE)
+  }, ignoreInit = FALSE)
   
   # --- OBSERVER 2: CPCAD LAYER UPDATES ---
   observeEvent(list(input$showCPCAD, input$provinceFilter, current_data$cpcad), {
-    req(input$mapElement)
-    proxy <- maplibre_proxy("mapElement")
-    
-    safe_clear_map_layer(proxy, "CPCAD_PA_fill")
-    safe_clear_map_layer(proxy, "CPCAD_OECM_fill")
+    proxy <- leafletProxy("mapElement")
+    proxy %>% clearGroup("CPCAD_layer")
     
     if (!isTRUE(input$showCPCAD)) return()
     
@@ -775,36 +729,39 @@ server <- function(input, output, session) {
       }
       
       if (!is.null(cpcad_pa) && nrow(cpcad_pa) > 0) {
+        pa_names <- if (!is.null(name_field)) cpcad_pa[[name_field]] else "Protected Area"
         proxy %>% 
-          add_fill_layer(
-            id = "CPCAD_PA_fill",
-            source = cpcad_pa,
-            fill_color = "#0AA1F4",
-            fill_opacity = 0.40,
-            tooltip = name_field
+          addPolygons(
+            data = cpcad_pa,
+            group = "CPCAD_layer",
+            fillColor = "#0AA1F4",
+            fillOpacity = 0.40,
+            color = "#0AA1F4",
+            weight = 1,
+            popup = paste0("<strong>Protected Area:</strong> ", pa_names)
           )
       }
       
       if (!is.null(cpcad_oecm) && nrow(cpcad_oecm) > 0) {
+        oecm_names <- if (!is.null(name_field)) cpcad_oecm[[name_field]] else "OECM Area"
         proxy %>% 
-          add_fill_layer(
-            id = "CPCAD_OECM_fill",
-            source = cpcad_oecm,
-            fill_color = "#FFCB00",
-            fill_opacity = 0.40,
-            tooltip = name_field
+          addPolygons(
+            data = cpcad_oecm,
+            group = "CPCAD_layer",
+            fillColor = "#FFCB00",
+            fillOpacity = 0.40,
+            color = "#FFCB00",
+            weight = 1,
+            popup = paste0("<strong>OECM Area:</strong> ", oecm_names)
           )
       }
     }
-  }, ignoreInit = TRUE)
+  }, ignoreInit = FALSE)
   
   # --- OBSERVER 3: CRITICAL HABITAT LAYER UPDATES ---
   observeEvent(list(input$showCH, input$provinceFilter, input$kbaFilter, current_data$ch), {
-    req(input$mapElement)
-    proxy <- maplibre_proxy("mapElement")
-    
-    safe_clear_map_layer(proxy, "CH_Endangered_fill")
-    safe_clear_map_layer(proxy, "CH_Threatened_fill")
+    proxy <- leafletProxy("mapElement")
+    proxy %>% clearGroup("CH_layer")
     
     if (!isTRUE(input$showCH)) return()
     
@@ -862,34 +819,38 @@ server <- function(input, output, session) {
       }
       
       if (!is.null(ch_endangered) && nrow(ch_endangered) > 0) {
+        end_names <- if (!is.null(comm_field)) ch_endangered[[comm_field]] else "Endangered CH"
         proxy %>% 
-          add_fill_layer(
-            id = "CH_Endangered_fill",
-            source = ch_endangered,
-            fill_color = "#FF0000",
-            fill_opacity = 0.50,
-            tooltip = comm_field
+          addPolygons(
+            data = ch_endangered,
+            group = "CH_layer",
+            fillColor = "#FF0000",
+            fillOpacity = 0.50,
+            color = "#FF0000",
+            weight = 1,
+            popup = paste0("<strong>Critical Habitat (Endangered):</strong> ", end_names)
           )
       }
       
       if (!is.null(ch_threatened) && nrow(ch_threatened) > 0) {
+        thr_names <- if (!is.null(comm_field)) ch_threatened[[comm_field]] else "Threatened CH"
         proxy %>% 
-          add_fill_layer(
-            id = "CH_Threatened_fill",
-            source = ch_threatened,
-            fill_color = "#FF1493",
-            fill_opacity = 0.50,
-            tooltip = comm_field
+          addPolygons(
+            data = ch_threatened,
+            group = "CH_layer",
+            fillColor = "#FF1493",
+            fillOpacity = 0.50,
+            color = "#FF1493",
+            weight = 1,
+            popup = paste0("<strong>Critical Habitat (Threatened):</strong> ", thr_names)
           )
       }
     }
-  }, ignoreInit = TRUE)
+  }, ignoreInit = FALSE)
   
   # --- OBSERVER 4: MAP VIEWPORT AND RE-CENTERING LOGIC ---
   observeEvent(list(input$provinceFilter, input$kbaFilter), {
-    req(input$mapElement)
-    proxy <- maplibre_proxy("mapElement")
-    
+    proxy <- leafletProxy("mapElement")
     target_id <- selected_kba_id()
     
     if (target_id != "All" && !is.null(current_data$kba)) {
@@ -899,18 +860,18 @@ server <- function(input, output, session) {
       
       if (!is.null(target_kba) && nrow(target_kba) > 0) {
         bbox <- as.numeric(st_bbox(target_kba))
-        proxy %>% fit_bounds(bbox, animate = TRUE)
+        proxy %>% fitBounds(bbox[1], bbox[2], bbox[3], bbox[4])
         return()
       }
     }
     
     if (is.null(input$provinceFilter) || input$provinceFilter %in% c("All", "Federal / Offshore", "Federal Offshore/Marine")) {
-      proxy %>% set_view(center = c(-96.8, 62.4), zoom = 3.2)
+      proxy %>% setView(lng = -96.8, lat = 62.4, zoom = 3.2)
     } else {
       prov_kba <- filtered_kba() %>% prep_sf_4326()
       if (!is.null(prov_kba) && nrow(prov_kba) > 0) {
         bbox <- as.numeric(st_bbox(prov_kba))
-        proxy %>% fit_bounds(bbox, animate = TRUE)
+        proxy %>% fitBounds(bbox[1], bbox[2], bbox[3], bbox[4])
       }
     }
   }, ignoreInit = TRUE)
@@ -918,9 +879,8 @@ server <- function(input, output, session) {
   # --- OBSERVER 5: ACTIVE SELECTION HIGHLIGHT ---
   observe({
     req(current_data$kba)
-    proxy <- maplibre_proxy("mapElement")
-    try(remove_layer(proxy, "selection_highlight_line"), silent = TRUE)
-    try(remove_source(proxy, "selection_highlight_line"), silent = TRUE)
+    proxy <- leafletProxy("mapElement")
+    proxy %>% clearGroup("selection_highlight")
     
     if (selected_kba_id() != "All") {
       target_kba <- current_data$kba %>% 
@@ -930,39 +890,31 @@ server <- function(input, output, session) {
       req(!is.null(target_kba) && nrow(target_kba) > 0)
       
       proxy %>% 
-        add_line_layer(
-          id = "selection_highlight_line",
-          source = target_kba,
-          line_color = "#2f4858",
-          line_width = 3.0
+        addPolylines(
+          data = target_kba,
+          group = "selection_highlight",
+          color = "#2f4858",
+          weight = 3.0,
+          opacity = 1.0
         )
     }
   })
   
-  # MAP CLICK SELECTION HANDLER (Handles general map & feature clicks)
-  observeEvent(input$mapElement_click, {
-    click <- input$mapElement_click
-    req(click)
+  # MAP CLICK SELECTION HANDLER
+  observeEvent(input$mapElement_shape_click, {
+    click <- input$mapElement_shape_click
+    req(click$id)
     
     kba_df <- current_data$kba
     req(kba_df)
     
-    target_id <- NULL
-    if (!is.null(click$props$kbasiteid)) {
-      target_id <- click$props$kbasiteid
-    } else if (!is.null(click$feature$kbasiteid)) {
-      target_id <- click$feature$kbasiteid
-    }
+    target_kba <- kba_df %>% 
+      filter(as.character(kbasiteid) == as.character(click$id)) %>% 
+      st_drop_geometry()
     
-    if (!is.null(target_id)) {
-      target_kba <- kba_df %>% 
-        filter(as.character(kbasiteid) == as.character(target_id)) %>% 
-        st_drop_geometry()
-      
-      if (nrow(target_kba) > 0) {
-        composite_string <- paste0(target_kba$kbasiteid[1], " - ", target_kba$nationalname[1])
-        updateSelectInput(session, "kbaFilter", selected = composite_string)
-      }
+    if (nrow(target_kba) > 0) {
+      composite_string <- paste0(target_kba$kbasiteid[1], " - ", target_kba$nationalname[1])
+      updateSelectInput(session, "kbaFilter", selected = composite_string)
     }
   })
   
