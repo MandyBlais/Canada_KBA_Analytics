@@ -1,5 +1,7 @@
 # PART 2 - SHINY APP DASHBOARD INTERFACE (MAPLIBRE GL / WEBGPU ENHANCED)
 
+options(repos = c(CRAN = "https://cran.rstudio.com/"))
+
 library(shiny)
 library(shinydashboard)
 library(mapgl)
@@ -32,18 +34,7 @@ get_kba_choices <- function(kba_df) {
   }
 }
 
-# Helper function to define Critical Habitat plot colours
-ch_status_map <- c(
-  "0" = "NULL",
-  "1" = "Extirpated",
-  "2" = "Endangered",
-  "3" = "Threatened",
-  "4" = "Special Concern",
-  "5" = "No Status",
-  "6" = "Not at Risk"
-)
-
-# Brand colors for SARA statuses
+# Safe SARA status brand colors
 ch_color_map <- c(
   "Extirpated"      = "#800080", # Purple
   "Endangered"      = "#FF0000", # Bright Red
@@ -67,13 +58,43 @@ clean_plotly_config <- function(p) {
   )
 }
 
-# Ensure sf layer objects are transformed to WGS 84 (EPSG:4326) for mapgl
+# Enhanced spatial prepper ensuring clean MULTIPOLYGON geometries for GeoJSON serialization
 prep_sf_4326 <- function(sf_obj) {
   if (is.null(sf_obj) || nrow(sf_obj) == 0) return(NULL)
-  if (st_crs(sf_obj) != st_crs(4326)) {
-    sf_obj <- st_transform(sf_obj, 4326)
+  
+  sf_clean <- suppressWarnings({
+    sf_obj %>%
+      st_make_valid() %>%
+      st_collection_extract("POLYGON") %>%
+      st_cast("MULTIPOLYGON") %>%
+      filter(!st_is_empty(.))
+  })
+  
+  if (is.null(sf_clean) || nrow(sf_clean) == 0) return(NULL)
+  
+  if (st_crs(sf_clean) != st_crs(4326)) {
+    sf_clean <- st_transform(sf_clean, 4326)
   }
-  sf_obj
+  sf_clean
+}
+
+# Helper to safely clear both layer and source from maplibre_proxy
+safe_clear_map_layer <- function(proxy, layer_id) {
+  try({
+    remove_layer(proxy, layer_id)
+    remove_source(proxy, layer_id)
+  }, silent = TRUE)
+}
+
+# Safe column extraction helper
+safe_extract_col <- function(df, candidates) {
+  if (is.null(df) || nrow(df) == 0) return(NULL)
+  cols_lower <- tolower(colnames(df))
+  for (cand in candidates) {
+    idx <- match(tolower(cand), cols_lower)
+    if (!is.na(idx)) return(colnames(df)[idx])
+  }
+  return(NULL)
 }
 
 # 1. Gracefully load cache on initialization
@@ -116,42 +137,40 @@ ui <- dashboardPage(
   
   sidebar = dashboardSidebar(
     width = 320,
-    sidebarMenu(
-      tags$div(
-        style = "padding: 15px; color: #fff;",
-        h4("Spatial Filter Configurations", class = "client-subhead", style = "margin-top: 0; margin-bottom: 12px;"),
-        p("Isolate regions using the dropdowns or click directly on a map boundary polygon.", class = "client-body", style = "color: #b8c7ce; font-size: 12px; margin-bottom: 15px;"),
-        hr(style = "border-color: #92BF00; border-width: 2px; margin: 15px 0;"),
-        
-        # Geographic Hierarchy Filters
-        selectInput(
-          "provinceFilter", "Province / Territory:", 
-          choices = get_province_choices(data_payload$kba_layer)
-        ),
-        
-        selectInput(
-          "kbaFilter", "Specific KBA Site:", 
-          choices = get_kba_choices(data_payload$kba_layer)
-        ),
-        
-        hr(style = "border-color: #92BF00; border-width: 2px; margin: 15px 0;"),
-        
-        # Layer Visibility Controls
-        h5("Map Layer Toggles", class = "client-subhead", style = "color: #fff; margin-bottom: 10px;"),
-        checkboxInput("showKBA", "Key Biodiversity Areas (KBAs) Layer", value = TRUE),
-        checkboxInput("showCPCAD", "PA & OECM (CPCAD) Layer", value = FALSE),
-        checkboxInput("showCH", "Critical Habitats (CH) Layer", value = FALSE),
-        
-        hr(style = "border-color: #92BF00; border-width: 2px; margin: 15px 0;"),
-        
-        # Operational Utilities
-        actionButton(
-          "runSync", "Force API Data Refresh", 
-          style = "width: 100%; font-weight: bold; background-color: #FFCB00; color: #3a3426; border-color: #FFCB00;"
-        ),
-        br(), br(),
-        tags$small(textOutput("cacheTimeText"), class = "client-body", style = "color: #9ca8b0;")
-      )
+    tags$div(
+      style = "padding: 15px; color: #fff;",
+      h4("Spatial Filter Configurations", class = "client-subhead", style = "margin-top: 0; margin-bottom: 12px;"),
+      p("Isolate regions using the dropdowns or click directly on a map boundary polygon.", class = "client-body", style = "color: #b8c7ce; font-size: 12px; margin-bottom: 15px;"),
+      hr(style = "border-color: #92BF00; border-width: 2px; margin: 15px 0;"),
+      
+      # Geographic Hierarchy Filters
+      selectInput(
+        "provinceFilter", "Province / Territory:", 
+        choices = get_province_choices(data_payload$kba_layer)
+      ),
+      
+      selectInput(
+        "kbaFilter", "Specific KBA Site:", 
+        choices = get_kba_choices(data_payload$kba_layer)
+      ),
+      
+      hr(style = "border-color: #92BF00; border-width: 2px; margin: 15px 0;"),
+      
+      # Layer Visibility Controls
+      h5("Map Layer Toggles", class = "client-subhead", style = "color: #fff; margin-bottom: 10px;"),
+      checkboxInput("showKBA", "Key Biodiversity Areas (KBAs) Layer", value = TRUE),
+      checkboxInput("showCPCAD", "PA & OECM (CPCAD) Layer", value = FALSE),
+      checkboxInput("showCH", "Critical Habitats (CH) Layer", value = FALSE),
+      
+      hr(style = "border-color: #92BF00; border-width: 2px; margin: 15px 0;"),
+      
+      # Operational Utilities
+      actionButton(
+        "runSync", "Force API Data Refresh", 
+        style = "width: 100%; font-weight: bold; background-color: #FFCB00; color: #3a3426; border-color: #FFCB00;"
+      ),
+      br(), br(),
+      tags$small(textOutput("cacheTimeText"), class = "client-body", style = "color: #9ca8b0;")
     )
   ),
   
@@ -206,9 +225,6 @@ ui <- dashboardPage(
         .metric-value { font-size: 18px; color: #0AA1F4; font-weight: bold; line-height: 1; }
         .metric-value-ch { font-size: 18px; color: #FF0000; font-weight: bold; line-height: 1; }
         
-        .well-unprotected { background-color: #fff1f2; border-left: 5px solid #ef4444; color: #3a3426; padding: 12px; border-radius: 6px; }
-        .well-protected { background-color: #f0fdf4; border-left: 5px solid #92BF00; color: #2f4858; padding: 12px; border-radius: 6px; }
-        
         .header-footnote { font-size: 11px; color: #64748b; font-style: italic; line-height: 1.4; margin-top: 15px; margin-bottom: 5px; }
         .chart-box-container { margin-bottom: 15px; }
       "))
@@ -232,7 +248,6 @@ ui <- dashboardPage(
         uiOutput("kbaSelectionHeader"),
         br(),
         
-        # PLOTLY CHARTS UI ROW (Rendered dynamically when a single site is selected)
         conditionalPanel(
           condition = "input.kbaFilter != 'All' && input.kbaFilter != ''",
           div(
@@ -300,12 +315,16 @@ server <- function(input, output, session) {
     time               = data_payload$timestamp
   )
   
+  # Pre-transform spatial datasets once upon reactive update
+  prep_kba_4326   <- reactive({ prep_sf_4326(current_data$kba) })
+  prep_cpcad_4326 <- reactive({ prep_sf_4326(current_data$cpcad) })
+  prep_ch_4326    <- reactive({ prep_sf_4326(current_data$ch) })
+  
   selected_kba_id <- reactive({
     if (is.null(input$kbaFilter) || input$kbaFilter == "All" || input$kbaFilter == "") return("All")
     sub(" - .*", "", trimws(input$kbaFilter))
   })
   
-  # Static footnote block definition
   static_footnote_ui <- tags$p(
     class = "header-footnote",
     "CPCAD Protected Areas & Other Effective Area-Based Conservation Measures (PA & OECM) totals reflect terrestrial and inland protected areas per province/territory; offshore marine protected areas are categorized under Federal / Offshore jurisdiction. Critical Habitat and KBA totals include adjacent coastal and marine areas."
@@ -343,7 +362,7 @@ server <- function(input, output, session) {
   filtered_kba <- reactive({
     df <- current_data$kba
     if (is.null(df)) return(NULL)
-    if (input$provinceFilter != "All") { 
+    if (!is.null(input$provinceFilter) && input$provinceFilter != "All") { 
       kba_cols <- tolower(colnames(df))
       jur_idx <- match(TRUE, kba_cols %in% c("jurisdiction_en", "jurisdiction_fr", "jurisdiction_es", "jurisdiction"))
       if (!is.na(jur_idx)) {
@@ -369,7 +388,6 @@ server <- function(input, output, session) {
     }
   }, ignoreInit = TRUE)
   
-  # Helper to safely extract numeric values from dataframe columns (case-insensitive)
   safe_extract <- function(df, col_names, default = 0) {
     if (is.null(df) || nrow(df) == 0) return(default)
     df_cols_lower <- tolower(colnames(df))
@@ -384,7 +402,7 @@ server <- function(input, output, session) {
     return(default)
   }
   
-  # --- CHART 1: FIXED DONUT CHART FOR KBA PROTECTION & CONSERVATION PROPORTIONS ---
+  # --- CHART 1: DONUT CHART ---
   output$kbaProtectionPlot <- renderPlotly({
     req(selected_kba_id() != "All")
     
@@ -396,20 +414,17 @@ server <- function(input, output, session) {
     
     colnames(target_kba) <- tolower(colnames(target_kba))
     
-    # Safe Extraction across primary and secondary fallback column names
     raw_1 <- safe_extract(target_kba, c("cpcad_1_prop", "cpcad_1_pct", "cpcad_1_perc", "prop_cpcad_1"))
     raw_2 <- safe_extract(target_kba, c("cpcad_2_prop", "cpcad_2_pct", "cpcad_2_perc", "prop_cpcad_2"))
     raw_3 <- safe_extract(target_kba, c("cpcad_3_prop", "cpcad_3_pct", "cpcad_3_perc", "prop_cpcad_3"))
     raw_4 <- safe_extract(target_kba, c("cpcad_4_prop", "cpcad_4_pct", "cpcad_4_perc", "prop_cpcad_4"))
     raw_5 <- safe_extract(target_kba, c("cpcad_5_prop", "cpcad_5_pct", "cpcad_5_perc", "prop_cpcad_5"))
     
-    # Fallback checks to pa_proportion / oecm_proportion if individual categories are zero/missing
     if (sum(c(raw_1, raw_2, raw_3, raw_4, raw_5), na.rm = TRUE) == 0) {
       raw_1 <- safe_extract(target_kba, c("pa_proportion", "pa_prop"))
       raw_2 <- safe_extract(target_kba, c("oecm_proportion", "oecm_prop"))
     }
     
-    # Auto-detect scale (decimal 0-1 vs percentage 0-100)
     max_val <- max(c(raw_1, raw_2, raw_3, raw_4, raw_5), na.rm = TRUE)
     multiplier <- if (max_val <= 1.0 && max_val > 0) 100 else 1
     
@@ -439,7 +454,6 @@ server <- function(input, output, session) {
     
     plot_df_filtered <- plot_df %>% filter(Percentage > 0)
     
-    # Render fallback slice if zero protection is recorded
     if (nrow(plot_df_filtered) == 0) {
       plot_df_filtered <- data.frame(
         Category = "Unprotected / Other",
@@ -477,7 +491,7 @@ server <- function(input, output, session) {
       clean_plotly_config()
   })
   
-  # --- CHART 2: CRITICAL HABITAT SARA STATUS (CODES 0 - 6) OVERLAP % ---
+  # --- CHART 2: CRITICAL HABITAT BAR CHART ---
   output$kbaChStatusPlot <- renderPlotly({
     req(selected_kba_id() != "All")
     req(current_data$ch_kba_overlaps)
@@ -509,10 +523,11 @@ server <- function(input, output, session) {
     )
     
     if (nrow(ch_overlaps) > 0 && !is.na(kba_total_ha) && kba_total_ha > 0) {
+      status_col <- safe_extract_col(ch_overlaps, c("sara_status", "status"))
       ch_overlaps <- ch_overlaps %>% 
         mutate(
           overlap_ha = as.numeric(st_area(.)) / 10000,
-          status_code = trimws(as.character(SARA_Status))
+          status_code = trimws(as.character(.data[[status_col]]))
         ) %>%
         st_drop_geometry() %>%
         group_by(status_code) %>%
@@ -605,7 +620,9 @@ server <- function(input, output, session) {
   output$mapElement <- renderMaplibre({
     req(current_data$kba)
     
-    maplibre(
+    initial_kba <- prep_kba_4326()
+    
+    m <- maplibre(
       style = carto_style("voyager"),
       center = c(-96.8, 62.4),
       zoom = 3.2
@@ -622,36 +639,75 @@ server <- function(input, output, session) {
         colors = c("#92BF00", "#0AA1F4", "#FFCB00", "#FF0000", "#FF1493"),
         position = "bottom-right"
       )
+    
+    if (!is.null(initial_kba) && nrow(initial_kba) > 0) {
+      m <- m %>%
+        add_fill_layer(
+          id = "KBA_layer_fill",
+          source = initial_kba,
+          fill_color = "#92BF00",
+          fill_opacity = 0.50,
+          tooltip = "nationalname"
+        ) %>%
+        add_line_layer(
+          id = "KBA_layer_line",
+          source = initial_kba,
+          line_color = "#2f4858",
+          line_width = 1.5
+        )
+    }
+    
+    m
   })
   
-  # --- OBSERVER 1: MAP LAYERS VIA MAPLIBRE GL ---
-  observe({
+  # --- OBSERVER 1: KBA LAYER UPDATES ---
+  observeEvent(list(input$showKBA, input$provinceFilter, current_data$kba), {
+    req(input$mapElement)
+    proxy <- maplibre_proxy("mapElement")
+    
+    safe_clear_map_layer(proxy, "KBA_layer_fill")
+    safe_clear_map_layer(proxy, "KBA_layer_line")
+    
     kba_raw <- filtered_kba()
-    req(kba_raw)
     if (is.null(kba_raw) || nrow(kba_raw) == 0) return()
     
-    proxy <- maplibre_proxy("mapElement") %>%
-      clear_layer("CPCAD_PA_fill") %>%
-      clear_layer("CPCAD_PA_line") %>%
-      clear_layer("CPCAD_OECM_fill") %>%
-      clear_layer("CPCAD_OECM_line") %>%
-      clear_layer("CH_Endangered_fill") %>%
-      clear_layer("CH_Endangered_line") %>%
-      clear_layer("CH_Threatened_fill") %>%
-      clear_layer("CH_Threatened_line") %>%
-      clear_layer("KBA_layer_fill") %>%
-      clear_layer("KBA_layer_line")
+    kba_data <- prep_sf_4326(kba_raw)
     
-    kba_data <- kba_raw %>% 
-      filter(as.character(st_geometry_type(.)) %in% c("POLYGON", "MULTIPOLYGON")) %>%
-      prep_sf_4326()
+    if (isTRUE(input$showKBA) && !is.null(kba_data) && nrow(kba_data) > 0) {
+      proxy %>% 
+        add_fill_layer(
+          id = "KBA_layer_fill",
+          source = kba_data,
+          fill_color = "#92BF00",
+          fill_opacity = 0.50,
+          tooltip = "nationalname"
+        ) %>%
+        add_line_layer(
+          id = "KBA_layer_line",
+          source = kba_data,
+          line_color = "#2f4858",
+          line_width = 1.5
+        )
+    }
+  }, ignoreInit = TRUE)
+  
+  # --- OBSERVER 2: CPCAD LAYER UPDATES ---
+  observeEvent(list(input$showCPCAD, input$provinceFilter, current_data$cpcad), {
+    req(input$mapElement)
+    proxy <- maplibre_proxy("mapElement")
     
-    selected_prov <- input$provinceFilter
+    safe_clear_map_layer(proxy, "CPCAD_PA_fill")
+    safe_clear_map_layer(proxy, "CPCAD_OECM_fill")
     
-    # --- CPCAD PROVINCIAL FILTERING ---
-    cpcad_data <- current_data$cpcad
-    if (!is.null(cpcad_data) && nrow(cpcad_data) > 0 && selected_prov != "All") {
-      cpcad_codes <- switch(selected_prov,
+    if (!isTRUE(input$showCPCAD)) return()
+    
+    prov_filter <- if (is.null(input$provinceFilter)) "All" else input$provinceFilter
+    cpcad_data <- prep_cpcad_4326()
+    
+    if (is.null(cpcad_data) || nrow(cpcad_data) == 0) return()
+    
+    if (prov_filter != "All") {
+      cpcad_codes <- switch(prov_filter,
                             "Alberta"                   = c("1", "AB", "ALBERTA", "48"),
                             "British Columbia"          = c("2", "BC", "BRITISH COLUMBIA", "59"),
                             "Manitoba"                  = c("3", "MB", "MANITOBA", "46"),
@@ -671,20 +727,75 @@ server <- function(input, output, session) {
       )
       
       if (!is.null(cpcad_codes)) {
-        cpcad_cols <- tolower(colnames(cpcad_data))
-        loc_idx <- match(TRUE, cpcad_cols %in% c("loc", "jur_id", "loc_e", "province_e"))
-        if (!is.na(loc_idx)) {
-          col_name <- colnames(cpcad_data)[loc_idx]
-          cpcad_vals <- toupper(trimws(as.character(cpcad_data[[col_name]])))
+        loc_col <- safe_extract_col(cpcad_data, c("loc", "jur_id", "loc_e", "province_e"))
+        if (!is.null(loc_col)) {
+          cpcad_vals <- toupper(trimws(as.character(cpcad_data[[loc_col]])))
           cpcad_data <- cpcad_data[cpcad_vals %in% cpcad_codes, ]
         }
       }
     }
     
-    # --- CRITICAL HABITAT PROVINCIAL FILTERING ---
-    ch_data <- current_data$ch
-    if (!is.null(ch_data) && nrow(ch_data) > 0 && selected_prov != "All") {
-      ch_codes <- switch(selected_prov,
+    if (!is.null(cpcad_data) && nrow(cpcad_data) > 0) {
+      name_field <- safe_extract_col(cpcad_data, c("name_e", "name", "pa_name_e"))
+      paoecm_col <- safe_extract_col(cpcad_data, c("pa_oecm_df", "paoecm_df", "pa_oecm"))
+      
+      if (!is.null(paoecm_col)) {
+        cpcad_pa   <- cpcad_data %>% filter(as.character(.data[[paoecm_col]]) %in% c("1", "3"))
+        cpcad_oecm <- cpcad_data %>% filter(as.character(.data[[paoecm_col]]) %in% c("2", "4"))
+      } else {
+        cpcad_pa   <- cpcad_data
+        cpcad_oecm <- NULL
+      }
+      
+      if (!is.null(cpcad_pa) && nrow(cpcad_pa) > 0) {
+        proxy %>% 
+          add_fill_layer(
+            id = "CPCAD_PA_fill",
+            source = cpcad_pa,
+            fill_color = "#0AA1F4",
+            fill_opacity = 0.40,
+            tooltip = name_field
+          )
+      }
+      
+      if (!is.null(cpcad_oecm) && nrow(cpcad_oecm) > 0) {
+        proxy %>% 
+          add_fill_layer(
+            id = "CPCAD_OECM_fill",
+            source = cpcad_oecm,
+            fill_color = "#FFCB00",
+            fill_opacity = 0.40,
+            tooltip = name_field
+          )
+      }
+    }
+  }, ignoreInit = TRUE)
+  
+  # --- OBSERVER 3: CRITICAL HABITAT LAYER UPDATES ---
+  observeEvent(list(input$showCH, input$provinceFilter, input$kbaFilter, current_data$ch), {
+    req(input$mapElement)
+    proxy <- maplibre_proxy("mapElement")
+    
+    safe_clear_map_layer(proxy, "CH_Endangered_fill")
+    safe_clear_map_layer(proxy, "CH_Threatened_fill")
+    
+    if (!isTRUE(input$showCH)) return()
+    
+    prov_filter <- if (is.null(input$provinceFilter)) "All" else input$provinceFilter
+    target_id   <- selected_kba_id()
+    
+    ch_poly <- if (target_id != "All" && !is.null(current_data$ch_kba_overlaps)) {
+      current_data$ch_kba_overlaps %>% 
+        filter(trimws(as.character(kbasiteid)) == trimws(target_id)) %>%
+        prep_sf_4326()
+    } else {
+      prep_ch_4326()
+    }
+    
+    if (is.null(ch_poly) || nrow(ch_poly) == 0) return()
+    
+    if (target_id == "All" && prov_filter != "All") {
+      ch_codes <- switch(prov_filter,
                          "Ontario"                   = c("ON", "ONTARIO", "35"),
                          "British Columbia"          = c("BC", "BRITISH COLUMBIA", "59"),
                          "Alberta"                   = c("AB", "ALBERTA", "48"),
@@ -702,169 +813,125 @@ server <- function(input, output, session) {
       )
       
       if (!is.null(ch_codes)) {
-        ch_cols <- tolower(colnames(ch_data))
-        prov_idx <- match(TRUE, ch_cols %in% c("provterr_e", "provterr", "province_e"))
-        if (!is.na(prov_idx)) {
-          col_name <- colnames(ch_data)[prov_idx]
+        prov_col <- safe_extract_col(ch_poly, c("provterr_e", "provterr", "province_e"))
+        if (!is.null(prov_col)) {
           pattern <- paste0("\\b(", paste(ch_codes, collapse = "|"), ")\\b")
-          ch_data <- ch_data[grepl(pattern, toupper(as.character(ch_data[[col_name]])), ignore.case = TRUE), ]
+          ch_poly <- ch_poly[grepl(pattern, toupper(as.character(ch_poly[[prov_col]])), ignore.case = TRUE), ]
         }
       }
     }
     
-    # --- RENDER CPCAD (SPLIT BY PA AND CONSERVED/OECM) ---
-    if (input$showCPCAD && !is.null(cpcad_data) && nrow(cpcad_data) > 0) {
-      cpcad_poly <- suppressWarnings({
-        cpcad_data %>% 
-          sf::st_make_valid() %>%
-          filter(!st_is_empty(.)) %>% 
-          filter(as.character(st_geometry_type(.)) %in% c("POLYGON", "MULTIPOLYGON")) %>%
-          prep_sf_4326()
-      })
+    if (!is.null(ch_poly) && nrow(ch_poly) > 0) {
+      comm_field <- safe_extract_col(ch_poly, c("commname_e", "commname", "sitename_e"))
+      status_col <- safe_extract_col(ch_poly, c("sara_status", "status"))
       
-      if (!is.null(cpcad_poly) && nrow(cpcad_poly) > 0) {
-        cpcad_names <- colnames(cpcad_poly)
-        name_field  <- cpcad_names[tolower(cpcad_names) %in% c("name_e", "name", "pa_name_e")][1]
-        
-        cpcad_pa   <- cpcad_poly %>% filter(as.character(PA_OECM_DF) %in% c("1", "3"))
-        cpcad_oecm <- cpcad_poly %>% filter(as.character(PA_OECM_DF) %in% c("2", "4"))
-        
-        if (nrow(cpcad_pa) > 0) {
-          proxy %>% add_fill_layer(
-            id = "CPCAD_PA_fill",
-            source = cpcad_pa,
-            fill_color = "#0AA1F4",
-            fill_opacity = 0.40,
-            tooltip = if (!is.na(name_field) && name_field %in% names(cpcad_pa)) name_field else NULL
-          )
-        }
-        
-        if (nrow(cpcad_oecm) > 0) {
-          proxy %>% add_fill_layer(
-            id = "CPCAD_OECM_fill",
-            source = cpcad_oecm,
-            fill_color = "#FFCB00",
-            fill_opacity = 0.40,
-            tooltip = if (!is.na(name_field) && name_field %in% names(cpcad_oecm)) name_field else NULL
-          )
-        }
-      }
-    }
-    
-    # --- RENDER CRITICAL HABITAT ---
-    if (isTRUE(input$showCH)) {
-      target_id <- selected_kba_id()
-      
-      ch_poly <- if (target_id != "All" && !is.null(current_data$ch_kba_overlaps)) {
-        current_data$ch_kba_overlaps %>% 
-          filter(trimws(as.character(kbasiteid)) == trimws(target_id))
+      if (!is.null(status_col)) {
+        ch_poly <- ch_poly %>% mutate(clean_status = trimws(as.character(.data[[status_col]])))
+        ch_endangered <- ch_poly %>% filter(clean_status %in% c("2", "2.0", "Endangered"))
+        ch_threatened <- ch_poly %>% filter(clean_status %in% c("3", "3.0", "Threatened"))
       } else {
-        ch_data
+        ch_endangered <- ch_poly
+        ch_threatened <- NULL
       }
       
-      if (!is.null(ch_poly) && nrow(ch_poly) > 0) {
-        ch_poly <- suppressWarnings({
-          ch_poly %>% 
-            sf::st_make_valid() %>% 
-            filter(!st_is_empty(.)) %>% 
-            filter(as.character(st_geometry_type(.)) %in% c("POLYGON", "MULTIPOLYGON")) %>%
-            prep_sf_4326()
-        })
-        
-        if (!is.null(ch_poly) && nrow(ch_poly) > 0) {
-          ch_names   <- colnames(ch_poly)
-          comm_field <- ch_names[tolower(ch_names) %in% c("commname_e", "commname", "sitename_e")][1]
-          
-          ch_poly <- ch_poly %>% mutate(clean_status = trimws(as.character(SARA_Status)))
-          
-          ch_endangered <- ch_poly %>% filter(clean_status %in% c("2", "2.0", "Endangered"))
-          ch_threatened <- ch_poly %>% filter(clean_status %in% c("3", "3.0", "Threatened"))
-          
-          if (nrow(ch_endangered) > 0) {
-            proxy %>% add_fill_layer(
-              id = "CH_Endangered_fill",
-              source = ch_endangered,
-              fill_color = "#FF0000",
-              fill_opacity = 0.50,
-              tooltip = if (!is.na(comm_field) && comm_field %in% names(ch_endangered)) comm_field else NULL
-            )
-          }
-          
-          if (nrow(ch_threatened) > 0) {
-            proxy %>% add_fill_layer(
-              id = "CH_Threatened_fill",
-              source = ch_threatened,
-              fill_color = "#FF1493",
-              fill_opacity = 0.50,
-              tooltip = if (!is.na(comm_field) && comm_field %in% names(ch_threatened)) comm_field else NULL
-            )
-          }
-        }
+      if (!is.null(ch_endangered) && nrow(ch_endangered) > 0) {
+        proxy %>% 
+          add_fill_layer(
+            id = "CH_Endangered_fill",
+            source = ch_endangered,
+            fill_color = "#FF0000",
+            fill_opacity = 0.50,
+            tooltip = comm_field
+          )
+      }
+      
+      if (!is.null(ch_threatened) && nrow(ch_threatened) > 0) {
+        proxy %>% 
+          add_fill_layer(
+            id = "CH_Threatened_fill",
+            source = ch_threatened,
+            fill_color = "#FF1493",
+            fill_opacity = 0.50,
+            tooltip = comm_field
+          )
       }
     }
-    
-    # --- RENDER KBAS ---
-    if (input$showKBA && !is.null(kba_data) && nrow(kba_data) > 0) {
-      proxy %>% 
-        add_fill_layer(
-          id = "KBA_layer_fill",
-          source = kba_data,
-          fill_color = "#92BF00",
-          fill_opacity = 0.50,
-          tooltip = "nationalname"
-        ) %>%
-        add_line_layer(
-          id = "KBA_layer_line",
-          source = kba_data,
-          line_color = "#2f4858",
-          line_width = 1.5
-        )
-    }
-    
-    # --- RECENTER MAP ---
-    if (selected_kba_id() == "All") {
-      if (input$provinceFilter %in% c("All", "Federal / Offshore")) {
-        proxy %>% set_view(center = c(-96.8, 62.4), zoom = 3.2)
-      } else if (!is.null(kba_data) && nrow(kba_data) > 0) {
-        proxy %>% fit_bounds(kba_data, animate = TRUE)
-      }
-    }
-  })
+  }, ignoreInit = TRUE)
   
-  # --- OBSERVER 2: ACTIVE SELECTION OVERLAYS ---
+  # --- OBSERVER 4: MAP VIEWPORT AND RE-CENTERING LOGIC ---
+  observeEvent(list(input$provinceFilter, input$kbaFilter), {
+    req(input$mapElement)
+    proxy <- maplibre_proxy("mapElement")
+    
+    target_id <- selected_kba_id()
+    
+    if (target_id != "All" && !is.null(current_data$kba)) {
+      target_kba <- current_data$kba %>% 
+        filter(as.character(kbasiteid) == target_id) %>% 
+        prep_sf_4326()
+      
+      if (!is.null(target_kba) && nrow(target_kba) > 0) {
+        bbox <- as.numeric(st_bbox(target_kba))
+        proxy %>% fit_bounds(bbox, animate = TRUE)
+        return()
+      }
+    }
+    
+    if (is.null(input$provinceFilter) || input$provinceFilter %in% c("All", "Federal / Offshore", "Federal Offshore/Marine")) {
+      proxy %>% set_view(center = c(-96.8, 62.4), zoom = 3.2)
+    } else {
+      prov_kba <- filtered_kba() %>% prep_sf_4326()
+      if (!is.null(prov_kba) && nrow(prov_kba) > 0) {
+        bbox <- as.numeric(st_bbox(prov_kba))
+        proxy %>% fit_bounds(bbox, animate = TRUE)
+      }
+    }
+  }, ignoreInit = TRUE)
+  
+  # --- OBSERVER 5: ACTIVE SELECTION HIGHLIGHT ---
   observe({
     req(current_data$kba)
-    proxy <- maplibre_proxy("mapElement") %>% clear_layer("selection_highlight_line")
+    proxy <- maplibre_proxy("mapElement")
+    try(remove_layer(proxy, "selection_highlight_line"), silent = TRUE)
+    try(remove_source(proxy, "selection_highlight_line"), silent = TRUE)
     
     if (selected_kba_id() != "All") {
       target_kba <- current_data$kba %>% 
         filter(as.character(kbasiteid) == selected_kba_id()) %>% 
-        filter(as.character(st_geometry_type(.)) %in% c("POLYGON", "MULTIPOLYGON")) %>%
         prep_sf_4326()
       
       req(!is.null(target_kba) && nrow(target_kba) > 0)
       
-      proxy %>% add_line_layer(
-        id = "selection_highlight_line",
-        source = target_kba,
-        line_color = "#2f4858",
-        line_width = 3.0
-      )
-      
-      proxy %>% fit_bounds(target_kba, animate = TRUE)
+      proxy %>% 
+        add_line_layer(
+          id = "selection_highlight_line",
+          source = target_kba,
+          line_color = "#2f4858",
+          line_width = 3.0
+        )
     }
   })
   
-  observeEvent(input$mapElement_layer_click, {
-    click <- input$mapElement_layer_click
+  # MAP CLICK SELECTION HANDLER (Handles general map & feature clicks)
+  observeEvent(input$mapElement_click, {
+    click <- input$mapElement_click
     req(click)
     
     kba_df <- current_data$kba
     req(kba_df)
     
-    # Handle click on feature layer
-    if (!is.null(click$feature$kbasiteid)) {
-      target_kba <- kba_df %>% filter(as.character(kbasiteid) == as.character(click$feature$kbasiteid)) %>% st_drop_geometry()
+    target_id <- NULL
+    if (!is.null(click$props$kbasiteid)) {
+      target_id <- click$props$kbasiteid
+    } else if (!is.null(click$feature$kbasiteid)) {
+      target_id <- click$feature$kbasiteid
+    }
+    
+    if (!is.null(target_id)) {
+      target_kba <- kba_df %>% 
+        filter(as.character(kbasiteid) == as.character(target_id)) %>% 
+        st_drop_geometry()
+      
       if (nrow(target_kba) > 0) {
         composite_string <- paste0(target_kba$kbasiteid[1], " - ", target_kba$nationalname[1])
         updateSelectInput(session, "kbaFilter", selected = composite_string)
@@ -890,8 +957,9 @@ server <- function(input, output, session) {
       
       colnames(summary_df) <- tolower(colnames(summary_df))
       
-      header_title <- if (input$provinceFilter == "All") "Canada National Overview" else paste0(input$provinceFilter, " Overview")
-      sub_title    <- if (input$provinceFilter == "All") "Aggregated nationwide conservation statistics." else paste0("Aggregated metrics for ", input$provinceFilter, ".")
+      prov_val <- if (is.null(input$provinceFilter)) "All" else input$provinceFilter
+      header_title <- if (prov_val == "All") "Canada National Overview" else paste0(prov_val, " Overview")
+      sub_title    <- if (prov_val == "All") "Aggregated nationwide conservation statistics." else paste0("Aggregated metrics for ", prov_val, ".")
       
       total_kba_ha  <- sum(summary_df$kba_total_area_ha, na.rm = TRUE)
       total_kba_km2 <- total_kba_ha * 0.01
@@ -906,27 +974,27 @@ server <- function(input, output, session) {
       kba_ch_end_pct   <- if (total_kba_ha > 0) min(100, (ch_endangered_ha / total_kba_ha) * 100) else 0
       kba_ch_thr_pct   <- if (total_kba_ha > 0) min(100, (ch_threatened_ha / total_kba_ha) * 100) else 0
       
-      total_cpcad_km2 <- if (is.null(input$provinceFilter) || input$provinceFilter == "All") {
+      total_cpcad_km2 <- if (prov_val == "All") {
         if (!is.null(current_data$national_cpcad_km2)) current_data$national_cpcad_km2 else 0
       } else {
         prov_summary <- current_data$cpcad_prov_summary
         if (!is.null(prov_summary) && nrow(prov_summary) > 0) {
           matched <- prov_summary %>% 
-            filter(tolower(trimws(JUR_CLEAN)) == tolower(trimws(input$provinceFilter)))
-          if (nrow(matched) > 0) sum(matched$CPCAD_KM2, na.rm = TRUE) else 0
+            filter(tolower(trimws(JUR_CLEAN)) == tolower(trimws(prov_val)))
+          if (nrow(matched) > 0) sum(matched$cpcad_km2, na.rm = TRUE) else 0
         } else {
           0
         }
       }
       
-      total_ch_km2 <- if (is.null(input$provinceFilter) || input$provinceFilter == "All") {
+      total_ch_km2 <- if (prov_val == "All") {
         if (!is.null(current_data$national_ch_km2)) current_data$national_ch_km2 else 0
       } else {
         ch_summary <- current_data$ch_prov_summary
         if (!is.null(ch_summary) && nrow(ch_summary) > 0) {
           matched <- ch_summary %>% 
-            filter(tolower(trimws(JUR_CLEAN)) == tolower(trimws(input$provinceFilter)))
-          if (nrow(matched) > 0) sum(matched$CH_KM2, na.rm = TRUE) else 0
+            filter(tolower(trimws(JUR_CLEAN)) == tolower(trimws(prov_val)))
+          if (nrow(matched) > 0) sum(matched$ch_km2, na.rm = TRUE) else 0
         } else {
           0
         }
@@ -1038,17 +1106,18 @@ server <- function(input, output, session) {
     }
   })
   
-  # --- TABLE 0: KBA SITES INVENTORY ---
+  # --- TABLES ---
   output$kbaTable <- renderDT({
     req(current_data$kba)
     target_id <- selected_kba_id()
     
     table_data <- current_data$kba %>% st_drop_geometry()
     
+    prov_val <- if (is.null(input$provinceFilter)) "All" else input$provinceFilter
     if (target_id != "All") {
       table_data <- table_data %>% filter(as.character(kbasiteid) == target_id)
-    } else if (input$provinceFilter != "All") {
-      table_data <- table_data %>% filter(jurisdiction_en == input$provinceFilter)
+    } else if (prov_val != "All") {
+      table_data <- table_data %>% filter(jurisdiction_en == prov_val)
     }
     
     if (nrow(table_data) == 0) {
@@ -1094,16 +1163,16 @@ server <- function(input, output, session) {
     datatable(final_table, options = list(pageLength = 15, scrollX = TRUE, dom = 'tp'), rownames = FALSE)
   })
   
-  # --- TABLE 1: CPCAD OVERLAPS INVENTORY ---
   output$overlapTable <- renderDT({
     req(current_data$cpcad_overlaps)
     target_id <- selected_kba_id()
     
     table_sf <- current_data$cpcad_overlaps
     
+    prov_val <- if (is.null(input$provinceFilter)) "All" else input$provinceFilter
     if (target_id != "All") {
       table_sf <- table_sf %>% filter(as.character(kbasiteid) == target_id)
-    } else if (input$provinceFilter != "All") {
+    } else if (prov_val != "All") {
       req(filtered_kba())
       prov_kba_ids <- unique(as.character(filtered_kba()$kbasiteid))
       table_sf <- table_sf %>% filter(as.character(kbasiteid) %in% prov_kba_ids)
@@ -1176,17 +1245,17 @@ server <- function(input, output, session) {
     datatable(final_table, options = list(pageLength = 15, scrollX = TRUE, dom = 'tp'), rownames = FALSE)
   })
   
-  # --- TABLE 2: CRITICAL HABITAT INVENTORY ---
   output$chTable <- renderDT({
     req(current_data$ch_kba_overlaps)
     
     raw_overlaps <- current_data$ch_kba_overlaps
     target_id    <- selected_kba_id()
+    prov_val     <- if (is.null(input$provinceFilter)) "All" else input$provinceFilter
     
     if (target_id != "All" && target_id != "") {
       table_data <- raw_overlaps %>% 
         filter(trimws(as.character(kbasiteid)) == target_id)
-    } else if (!is.null(input$provinceFilter) && input$provinceFilter != "All") {
+    } else if (prov_val != "All") {
       req(filtered_kba())
       prov_kba_ids <- unique(trimws(as.character(filtered_kba()$kbasiteid)))
       table_data <- raw_overlaps %>% 
@@ -1214,8 +1283,8 @@ server <- function(input, output, session) {
     
     site_area_km2 <- suppressWarnings(as.numeric(table_data$areakm2))
     
-    if (all(is.na(site_area_km2)) && "KBA_TOTAL_AREA_HA" %in% names(table_data)) {
-      site_area_km2 <- suppressWarnings(as.numeric(table_data$KBA_TOTAL_AREA_HA)) / 100
+    if (all(is.na(site_area_km2)) && "kba_total_area_ha" %in% names(table_data)) {
+      site_area_km2 <- suppressWarnings(as.numeric(table_data$kba_total_area_ha)) / 100
     }
     
     calc_coverage_pct <- ifelse(
@@ -1225,68 +1294,96 @@ server <- function(input, output, session) {
     )
     calc_coverage_pct <- pmin(100.0, calc_coverage_pct)
     
+    sara_stat_col <- safe_extract_col(table_data, c("sara_status", "status"))
+    sara_ag_col   <- safe_extract_col(table_data, c("sara_agency", "agency"))
+    rd_stat_col   <- safe_extract_col(table_data, c("rd_status", "rdstatus"))
+    taxon_col     <- safe_extract_col(table_data, c("taxon", "taxa"))
+    
     table_data <- table_data %>%
       mutate(
+        sara_status_val = if (!is.null(sara_stat_col)) .data[[sara_stat_col]] else NA,
         sara_status_label = case_when(
-          as.character(SARA_Status) %in% c("1", "Extirpated")      ~ "Extirpated",
-          as.character(SARA_Status) %in% c("2", "Endangered")      ~ "Endangered",
-          as.character(SARA_Status) %in% c("3", "Threatened")      ~ "Threatened",
-          as.character(SARA_Status) %in% c("4", "Special Concern")  ~ "Special Concern",
-          TRUE                                                     ~ as.character(SARA_Status)
+          as.character(sara_status_val) %in% c("1", "Extirpated")      ~ "Extirpated",
+          as.character(sara_status_val) %in% c("2", "Endangered")      ~ "Endangered",
+          as.character(sara_status_val) %in% c("3", "Threatened")      ~ "Threatened",
+          as.character(sara_status_val) %in% c("4", "Special Concern")  ~ "Special Concern",
+          TRUE                                                         ~ as.character(sara_status_val)
         ),
         
+        sara_ag_val = if (!is.null(sara_ag_col)) .data[[sara_ag_col]] else NA,
         sara_agency_label = case_when(
-          as.character(SARA_Agency) %in% c("1", "ECCC") ~ "Environment and Climate Change Canada",
-          as.character(SARA_Agency) %in% c("2", "DFO")  ~ "Fisheries and Oceans Canada",
-          as.character(SARA_Agency) %in% c("3", "PCA")  ~ "Parks Canada Agency",
-          TRUE                                          ~ as.character(SARA_Agency)
+          as.character(sara_ag_val) %in% c("1", "ECCC") ~ "Environment and Climate Change Canada",
+          as.character(sara_ag_val) %in% c("2", "DFO")  ~ "Fisheries and Oceans Canada",
+          as.character(sara_ag_val) %in% c("3", "PCA")  ~ "Parks Canada Agency",
+          TRUE                                          ~ as.character(sara_ag_val)
         ),
         
+        rd_stat_val = if (!is.null(rd_stat_col)) .data[[rd_stat_col]] else NA,
         rd_status_label = case_when(
-          as.character(RD_Status) %in% c("1", "Final")    ~ "Final",
-          as.character(RD_Status) %in% c("2", "Proposed") ~ "Proposed",
-          as.character(RD_Status) %in% c("3", "Draft")    ~ "Draft",
-          TRUE                                            ~ as.character(RD_Status)
+          as.character(rd_stat_val) %in% c("1", "Final")    ~ "Final",
+          as.character(rd_stat_val) %in% c("2", "Proposed") ~ "Proposed",
+          as.character(rd_stat_val) %in% c("3", "Draft")    ~ "Draft",
+          TRUE                                            ~ as.character(rd_stat_val)
         ),
         
+        taxon_val = if (!is.null(taxon_col)) .data[[taxon_col]] else NA,
         taxon_label = case_when(
-          as.character(Taxon) %in% c("1", "Amphibians", "AM", "Amphibien")           ~ "Amphibians",
-          as.character(Taxon) %in% c("2", "Birds", "BI", "AV", "Oiseau")             ~ "Birds",
-          as.character(Taxon) %in% c("3", "Fishes", "FI", "Poisson")                 ~ "Fishes (freshwater)",
-          as.character(Taxon) %in% c("4", "Invertebrates", "IN", "Invertébré")        ~ "Invertebrates",
-          as.character(Taxon) %in% c("5", "Lichens", "LI")                            ~ "Lichens",
-          as.character(Taxon) %in% c("6", "Mammals", "MA", "Mammifère")              ~ "Mammals",
-          as.character(Taxon) %in% c("7", "Mosses", "MO", "Mousse")                   ~ "Mosses",
-          as.character(Taxon) %in% c("8", "Reptiles", "RE", "Reptile")               ~ "Reptiles",
-          as.character(Taxon) %in% c("9", "Vascular Plants", "VP", "PL", "Plante")   ~ "Vascular Plants",
-          as.character(Taxon) %in% c("10", "Non-vascular Plants", "NV")              ~ "Non-vascular Plants",
-          as.character(Taxon) %in% c("11", "Molluscs", "MOLL", "Arthropods")         ~ "Molluscs",
-          as.character(Taxon) %in% c("12", "Fungi", "FU", "Champignons")             ~ "Fungi",
-          as.character(Taxon) %in% c("13", "Corals", "Sponges", "CO")                ~ "Corals / Sponges",
-          is.na(Taxon) | as.character(Taxon) %in% c("", "0", "99")                    ~ "Not Specified",
-          TRUE                                                                       ~ as.character(Taxon)
+          as.character(taxon_val) %in% c("1", "Amphibians", "AM", "Amphibien")           ~ "Amphibians",
+          as.character(taxon_val) %in% c("2", "Birds", "BI", "AV", "Oiseau")             ~ "Birds",
+          as.character(taxon_val) %in% c("3", "Fishes", "FI", "Poisson")                 ~ "Fishes (freshwater)",
+          as.character(taxon_val) %in% c("4", "Invertebrates", "IN", "Invertébré")        ~ "Invertebrates",
+          as.character(taxon_val) %in% c("5", "Lichens", "LI")                            ~ "Lichens",
+          as.character(taxon_val) %in% c("6", "Mammals", "MA", "Mammifère")              ~ "Mammals",
+          as.character(taxon_val) %in% c("7", "Mosses", "MO", "Mousse")                   ~ "Mosses",
+          as.character(taxon_val) %in% c("8", "Reptiles", "RE", "Reptile")               ~ "Reptiles",
+          as.character(taxon_val) %in% c("9", "Vascular Plants", "VP", "PL", "Plante")   ~ "Vascular Plants",
+          as.character(taxon_val) %in% c("10", "Non-vascular Plants", "NV")              ~ "Non-vascular Plants",
+          as.character(taxon_val) %in% c("11", "Molluscs", "MOLL", "Arthropods")         ~ "Molluscs",
+          as.character(taxon_val) %in% c("12", "Fungi", "FU", "Champignons")             ~ "Fungi",
+          as.character(taxon_val) %in% c("13", "Corals", "Sponges", "CO")                ~ "Corals / Sponges",
+          is.na(taxon_val) | as.character(taxon_val) %in% c("", "0", "99")                ~ "Not Specified",
+          TRUE                                                                           ~ as.character(taxon_val)
         )
       )
     
+    site_name_col = safe_extract_col(table_data, c("sitename_e", "nationalname", "sitename"))
+    comm_name_col = safe_extract_col(table_data, c("commname_e", "commname"))
+    sci_name_col  = safe_extract_col(table_data, c("sciname", "scientificname"))
+    cos_id_col    = safe_extract_col(table_data, c("cosewic_id", "cosewicid"))
+    prov_col      = safe_extract_col(table_data, c("provterr_e", "province_e", "prov"))
+    sens_col      = safe_extract_col(table_data, c("sensitive_e", "sensitive"))
+    rdoc_col      = safe_extract_col(table_data, c("rdoc_name_e", "rdoc_name"))
+    
     final_table <- table_data %>%
       mutate(
-        `Overlap (km2)` = calc_overlap_km2,
-        `Coverage (%)`  = calc_coverage_pct
+        `Overlap (km2)`           = calc_overlap_km2,
+        `Coverage (%)`            = calc_coverage_pct,
+        `Site Name`               = if (!is.null(site_name_col)) .data[[site_name_col]] else NA,
+        `Species Common Name`     = if (!is.null(comm_name_col)) .data[[comm_name_col]] else NA,
+        `Species Scientific Name` = if (!is.null(sci_name_col)) .data[[sci_name_col]] else NA,
+        `Taxon`                   = taxon_label,
+        `COSEWIC ID`              = if (!is.null(cos_id_col)) .data[[cos_id_col]] else NA,
+        `SARA Status`             = sara_status_label,
+        `Province`                = if (!is.null(prov_col)) .data[[prov_col]] else NA,
+        `Sensitive?`              = if (!is.null(sens_col)) .data[[sens_col]] else NA,
+        `Recovery Agency`         = sara_agency_label,
+        `Recovery Doc`            = if (!is.null(rdoc_col)) .data[[rdoc_col]] else NA,
+        `Doc Status`              = rd_status_label
       ) %>%
       select(
-        `Site Name`               = SiteName_E,
+        `Site Name`,
         `Overlap (km2)`,
         `Coverage (%)`,
-        `Species Common Name`     = CommName_E,
-        `Species Scientific Name` = SciName,
-        `Taxon`                   = taxon_label,
-        `COSEWIC ID`              = COSEWIC_ID,
-        `SARA Status`             = sara_status_label,
-        `Province`                = ProvTerr_E,
-        `Sensitive?`              = Sensitive_E,
-        `Recovery Agency`         = sara_agency_label,
-        `Recovery Doc`            = RDoc_Name_E,
-        `Doc Status`              = rd_status_label
+        `Species Common Name`,
+        `Species Scientific Name`,
+        `Taxon`,
+        `COSEWIC ID`,
+        `SARA Status`,
+        `Province`,
+        `Sensitive?`,
+        `Recovery Agency`,
+        `Recovery Doc`,
+        `Doc Status`
       )
     
     datatable(final_table, options = list(pageLength = 10, scrollX = TRUE, dom = 'tp'), rownames = FALSE)
