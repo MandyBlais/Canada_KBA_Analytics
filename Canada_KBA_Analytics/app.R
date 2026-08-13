@@ -12,17 +12,24 @@ library(fresh)
 library(plotly)
 
 CACHE_PATH <- "Canada_KBA_Analytics/data/cached_compiled_data.rds"
-RAW_GITHUB_URL <- "https://raw.githubusercontent.com/MandyBlais/Canada_KBA_Analytics/main/Canada_KBA_Analytics/data/cached_compiled_data.rds"
 
-# Ensure target directory structure exists
+# Direct URL to the actual Git LFS binary blob on GitHub
+LFS_BINARY_URL <- "https://media.githubusercontent.com/media/MandyBlais/Canada_KBA_Analytics/main/Canada_KBA_Analytics/data/cached_compiled_data.rds"
+
+# Ensure directory exists
 if (!dir.exists("Canada_KBA_Analytics/data")) {
   dir.create("Canada_KBA_Analytics/data", recursive = TRUE)
 }
 
-# Download the real binary file if missing or if it's a Git LFS text pointer (< 1 KB)
-if (!file.exists(CACHE_PATH) || file.info(CACHE_PATH)$size < 1000) {
-  message("Downloading binary RDS dataset from GitHub...")
-  download.file(RAW_GITHUB_URL, CACHE_PATH, mode = "wb")
+# Delete file if it's a small Git LFS text pointer (< 1 MB)
+if (file.exists(CACHE_PATH) && file.info(CACHE_PATH)$size < 1000000) {
+  file.remove(CACHE_PATH)
+}
+
+# Download full binary from media.githubusercontent.com if missing
+if (!file.exists(CACHE_PATH)) {
+  message("Downloading full 113MB LFS binary dataset from GitHub...")
+  download.file(LFS_BINARY_URL, CACHE_PATH, mode = "wb")
 }
 
 kba_data <- readRDS(CACHE_PATH)
