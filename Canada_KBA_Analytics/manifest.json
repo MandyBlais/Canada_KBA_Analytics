@@ -1633,78 +1633,6 @@
         "Built": "R 4.6.0; ; 2026-04-25 15:40:57 UTC; unix"
       }
     },
-    "geojsonsf": {
-      "Source": "CRAN",
-      "Repository": "https://cran.rstudio.com",
-      "description": {
-        "Package": "geojsonsf",
-        "Type": "Package",
-        "Title": "GeoJSON to Simple Feature Converter",
-        "Version": "2.0.5",
-        "Date": "2025-11-25",
-        "Authors@R": "c(\n    person(\"David\", \"Cooley\", ,\"dcooley@symbolix.com.au\", role = c(\"aut\", \"cre\")),\n    person(\"Andy\", \"Teucher\", ,\"andy.teucher@gmail.com\", role = \"ctb\")\n    )",
-        "Description": "Converts Between GeoJSON and simple feature objects. ",
-        "License": "MIT + file LICENSE",
-        "URL": "https://github.com/SymbolixAU/geojsonsf",
-        "BugReports": "https://github.com/SymbolixAU/geojsonsf/issues",
-        "Encoding": "UTF-8",
-        "LazyData": "true",
-        "Depends": "R (>= 4.0.0)",
-        "Imports": "Rcpp (>= 1.1.0)",
-        "LinkingTo": "geometries (>= 0.2.5), jsonify (>= 1.2.3), rapidjsonr (>=\n1.2.1), Rcpp, sfheaders (>= 0.4.5)",
-        "RoxygenNote": "7.3.3",
-        "Suggests": "covr, jsonify, knitr, rmarkdown, tinytest",
-        "VignetteBuilder": "knitr",
-        "NeedsCompilation": "yes",
-        "Packaged": "2025-11-26 08:50:31 UTC; david",
-        "Author": "David Cooley [aut, cre],\n  Andy Teucher [ctb]",
-        "Maintainer": "David Cooley <dcooley@symbolix.com.au>",
-        "Repository": "CRAN",
-        "Date/Publication": "2025-11-26 10:00:02 UTC",
-        "Built": "R 4.6.0; aarch64-apple-darwin23; 2026-04-25 23:39:25 UTC; unix",
-        "Archs": "geojsonsf.so.dSYM",
-        "RemoteType": "standard",
-        "RemotePkgRef": "geojsonsf",
-        "RemoteRef": "geojsonsf",
-        "RemoteRepos": "https://cran.rstudio.com",
-        "RemoteSha.Version": "2.0.5"
-      }
-    },
-    "geometries": {
-      "Source": "CRAN",
-      "Repository": "https://cran.rstudio.com",
-      "description": {
-        "Package": "geometries",
-        "Type": "Package",
-        "Title": "Convert Between R Objects and Geometric Structures",
-        "Date": "2025-11-23",
-        "Version": "0.2.5",
-        "Authors@R": "c(\n    person(\"David\", \"Cooley\", ,\"david.cooley.au@gmail.com\", role = c(\"aut\", \"cre\"))\n    )",
-        "Description": "Geometry shapes in 'R' are typically represented by matrices (points, lines), with more complex \n  shapes being lists of matrices (polygons). 'Geometries' will convert various 'R' objects into these shapes. \n  Conversion functions are available at both the 'R' level, and through 'Rcpp'.",
-        "License": "MIT + file LICENSE",
-        "URL": "https://dcooley.github.io/geometries/",
-        "BugReports": "https://github.com/dcooley/geometries/issues",
-        "Encoding": "UTF-8",
-        "RoxygenNote": "7.2.3",
-        "LinkingTo": "Rcpp",
-        "Imports": "Rcpp (>= 1.1.0)",
-        "Suggests": "covr, knitr, rmarkdown, tinytest",
-        "VignetteBuilder": "knitr",
-        "NeedsCompilation": "yes",
-        "Packaged": "2025-11-23 16:09:52 UTC; david",
-        "Author": "David Cooley [aut, cre]",
-        "Maintainer": "David Cooley <david.cooley.au@gmail.com>",
-        "Repository": "CRAN",
-        "Date/Publication": "2025-11-23 16:30:02 UTC",
-        "Built": "R 4.6.0; aarch64-apple-darwin23; 2026-04-25 15:51:38 UTC; unix",
-        "Archs": "geometries.so.dSYM",
-        "RemoteType": "standard",
-        "RemotePkgRef": "geometries",
-        "RemoteRef": "geometries",
-        "RemoteRepos": "https://cran.rstudio.com",
-        "RemoteSha.Version": "0.2.5"
-      }
-    },
     "gfonts": {
       "Source": "CRAN",
       "Repository": "https://cran.rstudio.com",
@@ -2677,40 +2605,6 @@
         "Archs": "magrittr.so.dSYM"
       }
     },
-    "mapgl": {
-      "Source": "CRAN",
-      "Repository": "https://cran.rstudio.com",
-      "description": {
-        "Package": "mapgl",
-        "Title": "Interactive Maps with 'Mapbox GL JS' and 'MapLibre GL JS'",
-        "Version": "0.5.0",
-        "Date": "2026-06-19",
-        "Authors@R": "c(\n    person(given = \"Kyle\", family = \"Walker\", email = \"kyle@walker-data.com\", role = c(\"aut\", \"cre\")),\n    person(given = \"Egor\", family = \"Kotov\", email = \"kotov.egor@gmail.com\", role = \"ctb\"))",
-        "Description": "Provides an interface to the 'Mapbox GL JS' (<https://docs.mapbox.com/mapbox-gl-js/guides>)\n    and the 'MapLibre GL JS' (<https://maplibre.org/maplibre-gl-js/docs/>) interactive mapping libraries to help users\n    create custom interactive maps in R.  Users can create interactive globe visualizations; layer 'sf' objects to create\n    filled maps, circle maps, 'heatmaps', and three-dimensional graphics; and customize map styles and views.  The package\n    also includes utilities to use 'Mapbox' and 'MapLibre' maps in 'Shiny' web applications.",
-        "URL": "https://walker-data.com/mapgl/",
-        "BugReports": "https://github.com/walkerke/mapgl/issues",
-        "License": "MIT + file LICENSE",
-        "Encoding": "UTF-8",
-        "LazyData": "true",
-        "RoxygenNote": "7.3.3",
-        "Depends": "R (>= 4.1.0)",
-        "Imports": "htmlwidgets, geojsonsf, sf, rlang, htmltools, grDevices,\nbase64enc, terra, classInt, shiny, viridisLite, png, jsonlite,\nhttpuv",
-        "Suggests": "chromote, knitr, mapboxapi, testthat (>= 3.0.0), usethis,\nleaflet",
-        "Config/testthat/edition": "3",
-        "NeedsCompilation": "no",
-        "Packaged": "2026-06-19 18:11:52 UTC; kylewalker",
-        "Author": "Kyle Walker [aut, cre],\n  Egor Kotov [ctb]",
-        "Maintainer": "Kyle Walker <kyle@walker-data.com>",
-        "Repository": "RSPM",
-        "Date/Publication": "2026-06-20 05:10:34 UTC",
-        "Built": "R 4.6.0; ; 2026-08-10 02:45:01 UTC; unix",
-        "RemoteType": "standard",
-        "RemotePkgRef": "mapgl",
-        "RemoteRef": "mapgl",
-        "RemoteRepos": "https://packagemanager.posit.co/cran/latest",
-        "RemoteSha.Version": "0.5.0"
-      }
-    },
     "memoise": {
       "Source": "CRAN",
       "Repository": "https://cran.rstudio.com",
@@ -2976,35 +2870,6 @@
         "RemoteRef": "plotly",
         "RemoteRepos": "https://cran.rstudio.com",
         "RemoteSha.Version": "4.12.1"
-      }
-    },
-    "png": {
-      "Source": "CRAN",
-      "Repository": "https://cran.rstudio.com",
-      "description": {
-        "Package": "png",
-        "Version": "0.1-9",
-        "Title": "Read and write PNG images",
-        "Author": "Simon Urbanek [aut, cre, cph] (https://urbanek.nz, ORCID:\n    <https://orcid.org/0000-0003-2297-1732>)",
-        "Authors@R": "person(\"Simon\", \"Urbanek\", role=c(\"aut\",\"cre\",\"cph\"), email=\"Simon.Urbanek@r-project.org\", comment=c(\"https://urbanek.nz\", ORCID=\"0000-0003-2297-1732\"))",
-        "Maintainer": "Simon Urbanek <Simon.Urbanek@r-project.org>",
-        "Depends": "R (>= 2.9.0)",
-        "Description": "This package provides an easy and simple way to read, write and display bitmap images stored in the PNG format. It can read and write both files and in-memory raw vectors.",
-        "License": "GPL-2 | GPL-3",
-        "SystemRequirements": "libpng",
-        "URL": "https://www.rforge.net/png/",
-        "BugReports": "https://github.com/s-u/png/issues/",
-        "NeedsCompilation": "yes",
-        "Packaged": "2026-03-15 03:28:25 UTC; rforge",
-        "Repository": "CRAN",
-        "Date/Publication": "2026-03-15 16:50:02 UTC",
-        "Built": "R 4.6.0; aarch64-apple-darwin23; 2026-04-25 15:50:44 UTC; unix",
-        "Archs": "png.so.dSYM",
-        "RemoteType": "standard",
-        "RemotePkgRef": "png",
-        "RemoteRef": "png",
-        "RemoteRepos": "https://cran.rstudio.com",
-        "RemoteSha.Version": "0.1-9"
       }
     },
     "prettyunits": {
@@ -3924,41 +3789,6 @@
         "RemoteRef": "sf",
         "RemoteRepos": "https://cran.rstudio.com",
         "RemoteSha.Version": "1.1-1"
-      }
-    },
-    "sfheaders": {
-      "Source": "CRAN",
-      "Repository": "https://cran.rstudio.com",
-      "description": {
-        "Package": "sfheaders",
-        "Type": "Package",
-        "Title": "Converts Between R Objects and Simple Feature Objects",
-        "Date": "2025-11-24",
-        "Version": "0.4.5",
-        "Authors@R": "c(\n    person(\"David\", \"Cooley\", ,\"david.cooley.au@gmail.com\", role = c(\"aut\", \"cre\")),\n    person(given = \"Michael\", family = \"Sumner\", role = \"ctb\")\n    )",
-        "Description": "Converts between R and Simple Feature 'sf' objects, without depending\n  on the Simple Feature library. Conversion functions are available at both the R level, \n  and through 'Rcpp'.",
-        "License": "MIT + file LICENSE",
-        "URL": "https://dcooley.github.io/sfheaders/",
-        "BugReports": "https://github.com/dcooley/sfheaders/issues",
-        "Encoding": "UTF-8",
-        "RoxygenNote": "7.3.2",
-        "Depends": "R (>= 3.0.2)",
-        "LinkingTo": "geometries (>= 0.2.5), Rcpp",
-        "Imports": "Rcpp (>= 1.1.0)",
-        "Suggests": "covr, knitr, testthat",
-        "NeedsCompilation": "yes",
-        "Packaged": "2025-11-24 13:15:04 UTC; david",
-        "Author": "David Cooley [aut, cre],\n  Michael Sumner [ctb]",
-        "Maintainer": "David Cooley <david.cooley.au@gmail.com>",
-        "Repository": "CRAN",
-        "Date/Publication": "2025-11-25 19:20:02 UTC",
-        "Built": "R 4.6.0; aarch64-apple-darwin23; 2026-04-25 23:18:57 UTC; unix",
-        "Archs": "sfheaders.so.dSYM",
-        "RemoteType": "standard",
-        "RemotePkgRef": "sfheaders",
-        "RemoteRef": "sfheaders",
-        "RemoteRepos": "https://cran.rstudio.com",
-        "RemoteSha.Version": "0.4.5"
       }
     },
     "shiny": {
@@ -5022,13 +4852,13 @@
       "checksum": "fa9c8582238c4cc36af78cc88724efb0"
     },
     ".Rprofile": {
-      "checksum": "c2e516f1c7df2c598fc84737989b9239"
+      "checksum": "dc13bf1b8a0c4fd914d69db7534642bf"
     },
     "5 Boundary-Obscured KBA Sites.docx": {
       "checksum": "af7ae52d5a5ff9c95eccaf5b32607853"
     },
     "app.R": {
-      "checksum": "40a8e07b4ba0535942aaa8c17d9792da"
+      "checksum": "359a930a60f6219eb9ad785d61cc59cb"
     },
     "CH_CPCAD_Provincial_Summaries.docx": {
       "checksum": "5ef041901211b7f80193f5611540a9ef"
@@ -5130,7 +4960,7 @@
       "checksum": "6e1413dfda15258d3f319552d30b9820"
     },
     "renv.lock": {
-      "checksum": "6cdcf9906b3ee8cadc2283a1392f509c"
+      "checksum": "c82e5344e7f8c53bf39ae2344f38f2ba"
     }
   },
   "users": null

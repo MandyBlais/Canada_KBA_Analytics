@@ -4,7 +4,6 @@ options(repos = c(CRAN = "https://cran.rstudio.com/"))
 
 library(shiny)
 library(shinydashboard)
-library(mapgl)
 library(sf)
 library(dplyr)
 library(DT)
