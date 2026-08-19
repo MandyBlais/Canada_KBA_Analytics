@@ -108,41 +108,33 @@ ui <- dashboardPage(
   
   sidebar = dashboardSidebar(
     width = 320,
-    sidebarMenu(
+    
+    tags$div(
+      style = "padding: 15px;",
+      
+      h5("Spatial Filter Controls", class = "client-subhead", style = "margin-top: 0; margin-bottom: 10px; color: #92BF00;"),
+      
+      selectInput(
+        "provinceFilter", "Province / Territory:", 
+        choices = get_province_choices(data_payload$kba_layer)
+      ),
+      selectInput(
+        "kbaFilter", "Specific KBA Site:", 
+        choices = get_kba_choices(data_payload$kba_layer)
+      ),
+      
+      hr(style = "border-color: #92BF00; border-width: 1px; margin: 15px 0;"),
+      
+      h5("Layer Visibility Toggles", class = "client-subhead", style = "color: #ffffff; margin-bottom: 8px;"),
+      checkboxInput("showKBA", "Show KBAs (Green)", value = TRUE),
+      checkboxInput("showCPCAD", "Show CPCAD Layers", value = FALSE),
+      checkboxInput("showCH", "Show Critical Habitat Layers", value = FALSE),
+      
+      hr(style = "border-color: #92BF00; border-width: 1px; margin: 15px 0;"),
+      
       tags$div(
-        style = "padding: 15px; color: #fff;",
-        h4("Spatial Filter Configurations", class = "client-subhead", style = "margin-top: 0; margin-bottom: 12px;"),
-        p("Isolate regions using the dropdowns or click directly on a map boundary polygon.", class = "client-body", style = "color: #b8c7ce; font-size: 12px; margin-bottom: 15px;"),
-        hr(style = "border-color: #92BF00; border-width: 2px; margin: 15px 0;"),
-        
-        # Geographic Hierarchy Filters
-        selectInput(
-          "provinceFilter", "Province / Territory:", 
-          choices = get_province_choices(data_payload$kba_layer)
-        ),
-        
-        selectInput(
-          "kbaFilter", "Specific KBA Site:", 
-          choices = get_kba_choices(data_payload$kba_layer)
-        ),
-        
-        hr(style = "border-color: #92BF00; border-width: 2px; margin: 15px 0;"),
-        
-        # Layer Visibility Controls
-        h5("Map Layer Toggles", class = "client-subhead", style = "color: #fff; margin-bottom: 10px;"),
-        checkboxInput("showKBA", "Show KBAs (Green)", value = TRUE),
-        checkboxInput("showCPCAD", "Show CPCAD Layers", value = FALSE),
-        checkboxInput("showCH", "Show Critical Habitat Layers", value = FALSE),
-        
-        hr(style = "border-color: #92BF00; border-width: 2px; margin: 15px 0;"),
-        
-        # Operational Utilities
-        actionButton(
-          "runSync", "Force API Data Refresh", 
-          style = "width: 100%; font-weight: bold; background-color: #FFCB00; color: #3a3426; border-color: #FFCB00;"
-        ),
-        br(), br(),
-        tags$small(textOutput("cacheTimeText"), class = "client-body", style = "color: #9ca8b0;")
+        style = "text-align: center; margin-top: 15px;",
+        tags$small(textOutput("cacheTimeText"), class = "client-body", style = "color: #b8c7ce; font-size: 11px;")
       )
     )
   ),
@@ -189,7 +181,7 @@ ui <- dashboardPage(
         
         .main-header .navbar { background-color: #0AA1F4 !important; }
         .main-header .logo { background-color: #2f4858 !important; color: #92BF00 !important; }
-        .content-wrapper { background-color: #3a3426 !important; }
+        .content-wrapper, .right-side { background-color: #3a3426 !important; }
         #right-panel { background: #ffffff; border-left: 4px solid #92BF00; padding: 20px; height: calc(100vh - 80px); overflow-y: auto; }
         
         .metric-container { margin-bottom: 15px; }
@@ -221,10 +213,11 @@ ui <- dashboardPage(
         p("Detailed site telemetry, legal protection, and species risk attributes.", class = "client-body", style = "color: #475569; margin-bottom: 15px;"),
         hr(style = "border-color: #92BF00; margin: 15px 0;"),
         
+        # Telemetry Header Metrics
         uiOutput("kbaSelectionHeader"),
         br(),
         
-        # PLOTLY CHARTS UI ROW (Rendered dynamically when a single site is selected)
+        # Dynamic Charts
         conditionalPanel(
           condition = "input.kbaFilter != 'All' && input.kbaFilter != ''",
           div(
@@ -250,6 +243,7 @@ ui <- dashboardPage(
           hr(style = "border-color: #e2e8f0; margin: 15px 0;")
         ),
         
+        # Attribute Data Tables
         tabsetPanel(
           type = "tabs",
           tabPanel(
@@ -301,33 +295,6 @@ server <- function(input, output, session) {
     class = "header-footnote",
     "CPCAD totals reflect terrestrial and inland protected areas per province/territory; offshore marine protected areas are categorized under Federal / Offshore jurisdiction. Critical Habitat and KBA totals include adjacent coastal and marine areas."
   )
-  
-  observeEvent(input$runSync, {
-    showModal(modalDialog("Querying APIs & Re-Calculating Spatial Intersections... Please wait.", footer = NULL))
-    tryCatch({
-      source("data_engine.R")
-      refresh_spatial_cache()
-      
-      new_payload <- readRDS(CACHE_PATH)
-      current_data$kba                <- new_payload$kba_layer
-      current_data$cpcad              <- new_payload$cpcad_layer
-      current_data$ch                 <- new_payload$ch_layer
-      current_data$cpcad_overlaps     <- new_payload$cpcad_overlaps
-      current_data$ch_kba_overlaps    <- new_payload$ch_kba_overlaps
-      current_data$national_cpcad_km2 <- new_payload$national_cpcad_km2
-      current_data$national_ch_km2    <- new_payload$national_ch_km2
-      current_data$cpcad_prov_summary <- new_payload$cpcad_prov_summary
-      current_data$ch_prov_summary    <- new_payload$ch_prov_summary
-      current_data$time               <- new_payload$timestamp
-      
-      updateSelectInput(session, "provinceFilter", choices = get_province_choices(current_data$kba))
-      updateSelectInput(session, "kbaFilter", choices = get_kba_choices(current_data$kba))
-      
-    }, error = function(e) {
-      showNotification(paste("Sync Processing Fault:", e$message), type = "error", duration = 10)
-    })
-    removeModal()
-  })
   
   output$cacheTimeText <- renderText({ paste("Data Timestamp:", current_data$time) })
   
@@ -397,7 +364,6 @@ server <- function(input, output, session) {
     return(rep(NA, nrow(df)))
   }
   
-  # Robust normalization for Canadian jurisdiction names/codes
   normalize_jurisdiction <- function(x) {
     x_clean <- toupper(trimws(as.character(x)))
     case_when(
@@ -420,7 +386,6 @@ server <- function(input, output, session) {
     )
   }
   
-  # Helper to query summary dataframes safely regardless of column naming or prov alias
   safe_summary_sum <- function(summary_df, target_prov, km2_candidates) {
     if (is.null(summary_df) || nrow(summary_df) == 0) return(0)
     
@@ -436,12 +401,10 @@ server <- function(input, output, session) {
     return(safe_col_sum(matched_df, km2_candidates, 0))
   }
   
-  # --- PROVINCIAL AREA CALCULATOR (WITH S2 GEOMETRY SAFETY AND REPAIR) ---
   get_provincial_cpcad_area <- function(prov, summary_df, cpcad_layer) {
     val <- safe_summary_sum(summary_df, prov, c("cpcad_km2", "area_km2", "total_km2", "pa_oecm_km2", "pa_km2", "oecm_km2"))
     if (val > 0) return(val)
     
-    # Fallback to direct geometry evaluation if summary table lookup yields 0 or missing
     if (!is.null(cpcad_layer) && nrow(cpcad_layer) > 0) {
       loc_col <- safe_get_col(cpcad_layer, c("loc", "jur_id", "loc_e", "province_e", "jurisdiction"))
       if (!all(is.na(loc_col))) {
@@ -450,10 +413,8 @@ server <- function(input, output, session) {
         matched_layer <- cpcad_layer[norm_loc == norm_target, ]
         if (nrow(matched_layer) > 0) {
           return(tryCatch({
-            # Attempt 1: Standard s2 validation
             sum(as.numeric(sf::st_area(sf::st_make_valid(matched_layer))) / 1e6, na.rm = TRUE)
           }, error = function(e) {
-            # Attempt 2: Turn off s2 spherical engine temporarily for planar planar calculation fallback
             suppressWarnings({
               sf::sf_use_s2(FALSE)
               area_val <- sum(as.numeric(sf::st_area(sf::st_make_valid(matched_layer))) / 1e6, na.rm = TRUE)
@@ -471,7 +432,6 @@ server <- function(input, output, session) {
     val <- safe_summary_sum(summary_df, prov, c("ch_km2", "area_km2", "total_km2", "total_ch_km2", "ch_area_km2"))
     if (val > 0) return(val)
     
-    # Fallback to direct geometry evaluation if summary table lookup yields 0 or missing
     if (!is.null(ch_layer) && nrow(ch_layer) > 0) {
       prov_col <- safe_get_col(ch_layer, c("provterr_e", "provterr", "province_e", "jurisdiction"))
       if (!all(is.na(prov_col))) {
@@ -480,10 +440,8 @@ server <- function(input, output, session) {
         matched_layer <- ch_layer[norm_prov == norm_target, ]
         if (nrow(matched_layer) > 0) {
           return(tryCatch({
-            # Attempt 1: Standard s2 validation
             sum(as.numeric(sf::st_area(sf::st_make_valid(matched_layer))) / 1e6, na.rm = TRUE)
           }, error = function(e) {
-            # Attempt 2: Turn off s2 spherical engine temporarily for planar calculation fallback
             suppressWarnings({
               sf::sf_use_s2(FALSE)
               area_val <- sum(as.numeric(sf::st_area(sf::st_make_valid(matched_layer))) / 1e6, na.rm = TRUE)
@@ -497,7 +455,6 @@ server <- function(input, output, session) {
     return(0)
   }
   
-  # --- CHART 1: DONUT CHART FOR KBA PROTECTION & CONSERVATION PROPORTIONS ---
   output$kbaProtectionPlot <- renderPlotly({
     req(selected_kba_id() != "All")
     
@@ -557,7 +514,6 @@ server <- function(input, output, session) {
       clean_plotly_config()
   })
   
-  # --- CHART 2: CRITICAL HABITAT SARA STATUS OVERLAP % ---
   output$kbaChStatusPlot <- renderPlotly({
     req(selected_kba_id() != "All")
     req(current_data$ch_kba_overlaps)
@@ -655,7 +611,6 @@ server <- function(input, output, session) {
     }
   })
   
-  # --- LEAFLET MAP INITIALIZATION ---
   output$mapElement <- renderLeaflet({
     req(current_data$kba)
     
@@ -670,7 +625,6 @@ server <- function(input, output, session) {
       )
   })
   
-  # --- OBSERVER 1: MAP LAYERS (HARDWARE ACCELERATED VIA LEAFGL) ---
   observe({
     kba_raw <- filtered_kba()
     req(kba_raw)
@@ -685,7 +639,6 @@ server <- function(input, output, session) {
     selected_prov <- input$provinceFilter
     target_kba_id <- selected_kba_id()
     
-    # --- CPCAD SPATIAL RESOLUTION & FILTERING ---
     cpcad_data <- if (target_kba_id != "All" && !is.null(current_data$cpcad_overlaps)) {
       overlaps <- current_data$cpcad_overlaps
       site_col <- safe_get_col(overlaps, c("kbasiteid", "siteid"))
@@ -723,7 +676,6 @@ server <- function(input, output, session) {
       }
     }
     
-    # --- CRITICAL HABITAT PROVINCIAL FILTERING ---
     ch_data <- current_data$ch
     if (!is.null(ch_data) && nrow(ch_data) > 0 && selected_prov != "All" && target_kba_id == "All") {
       ch_codes <- switch(selected_prov,
@@ -752,7 +704,6 @@ server <- function(input, output, session) {
       }
     }
     
-    # --- RENDER CPCAD LAYERS ---
     if (input$showCPCAD && !is.null(cpcad_data) && nrow(cpcad_data) > 0) {
       cpcad_poly <- suppressWarnings({
         cpcad_data %>% 
@@ -792,7 +743,6 @@ server <- function(input, output, session) {
       }
     }
     
-    # --- RENDER CRITICAL HABITAT LAYERS ---
     if (isTRUE(input$showCH)) {
       ch_poly <- if (target_kba_id != "All" && !is.null(current_data$ch_kba_overlaps)) {
         overlaps <- current_data$ch_kba_overlaps
@@ -841,7 +791,6 @@ server <- function(input, output, session) {
       }
     }
     
-    # --- RENDER KBAS ---
     if (input$showKBA && nrow(kba_data) > 0) {
       proxy %>% addPolygons(
         data = kba_data, color = "#2f4858", weight = 1.5, fillOpacity = 0.50, fillColor = "#92BF00",
@@ -850,7 +799,6 @@ server <- function(input, output, session) {
       )
     }
     
-    # --- RECENTER MAP ---
     if (target_kba_id == "All") {
       if (input$provinceFilter %in% c("All", "Federal / Offshore", "Federal Offshore/Marine")) {
         proxy %>% setView(lng = -96.8, lat = 62.4, zoom = 4)
@@ -861,7 +809,6 @@ server <- function(input, output, session) {
     }
   })
   
-  # --- OBSERVER 2: ACTIVE SELECTION OVERLAYS ---
   observe({
     req(current_data$kba)
     proxy <- leafletProxy("mapElement") %>% clearGroup("selection_highlight")
@@ -898,7 +845,6 @@ server <- function(input, output, session) {
     }
   })
   
-  # --- HEADER METRICS UI ---
   output$kbaSelectionHeader <- renderUI({
     req(current_data$kba)
     
@@ -929,14 +875,12 @@ server <- function(input, output, session) {
       kba_ch_end_pct   <- if (total_kba_km2 > 0) min(100, (ch_endangered_ha / total_kba_km2) * 100) else 0
       kba_ch_thr_pct   <- if (total_kba_km2 > 0) min(100, (ch_threatened_ha / total_kba_km2) * 100) else 0
       
-      # Fixed Provincial CPCAD Header Total Area Retrieval with S2 Safety Fallback
       total_cpcad_km2 <- if (is.null(input$provinceFilter) || input$provinceFilter == "All") {
         if (!is.null(current_data$national_cpcad_km2)) current_data$national_cpcad_km2 else 0
       } else {
         get_provincial_cpcad_area(input$provinceFilter, current_data$cpcad_prov_summary, current_data$cpcad)
       }
       
-      # Fixed Provincial Critical Habitat Header Total Area Retrieval with S2 Safety Fallback
       total_ch_km2 <- if (is.null(input$provinceFilter) || input$provinceFilter == "All") {
         if (!is.null(current_data$national_ch_km2)) current_data$national_ch_km2 else 0
       } else {
@@ -1047,7 +991,6 @@ server <- function(input, output, session) {
     }
   })
   
-  # --- TABLE 0: KBA SITES INVENTORY ---
   output$kbaTable <- renderDT({
     req(current_data$kba)
     target_id <- selected_kba_id()
@@ -1065,7 +1008,6 @@ server <- function(input, output, session) {
       return(datatable(data.frame(Message = "No KBA sites found for this selection."), options = list(dom = 't'), rownames = FALSE))
     }
     
-    # Extract fields safely before building output table
     kba_id_vec      <- safe_get_col(table_data, c("kbasiteid", "siteid"))
     name_vec        <- safe_get_col(table_data, c("nationalname", "name_e"))
     jur_vec         <- safe_get_col(table_data, c("jurisdiction_en", "jurisdiction"))
@@ -1110,8 +1052,6 @@ server <- function(input, output, session) {
     datatable(final_table, options = list(pageLength = 15, scrollX = TRUE, dom = 'tp'), rownames = FALSE)
   })
   
-  
-  # --- TABLE 1: CPCAD OVERLAPS INVENTORY ---
   output$overlapTable <- renderDT({
     req(current_data$cpcad_overlaps)
     target_id <- selected_kba_id()
@@ -1178,8 +1118,6 @@ server <- function(input, output, session) {
     datatable(final_table, options = list(pageLength = 15, scrollX = TRUE, dom = 'tp'), rownames = FALSE)
   })
   
-  
-  # --- TABLE 2: CRITICAL HABITAT INVENTORY ---
   output$chTable <- renderDT({
     req(current_data$ch_kba_overlaps)
     
