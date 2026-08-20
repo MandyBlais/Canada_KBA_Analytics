@@ -1189,21 +1189,22 @@ server <- function(input, output, session) {
     
     taxon_raw <- safe_get_col(table_data, c("taxon"))
     taxon_lbl <- case_when(
-      as.character(taxon_raw) %in% c("1", "Amphibians", "AM", "Amphibien")           ~ "Amphibians",
-      as.character(taxon_raw) %in% c("2", "Birds", "BI", "AV", "Oiseau")             ~ "Birds",
-      as.character(taxon_raw) %in% c("3", "Fishes", "FI", "Poisson")                 ~ "Fishes (freshwater)",
-      as.character(taxon_raw) %in% c("4", "Invertebrates", "IN", "Invertébré")        ~ "Invertebrates",
-      as.character(taxon_raw) %in% c("5", "Lichens", "LI")                            ~ "Lichens",
-      as.character(taxon_raw) %in% c("6", "Mammals", "MA", "Mammifère")              ~ "Mammals",
-      as.character(taxon_raw) %in% c("7", "Mosses", "MO", "Mousse")                   ~ "Mosses",
-      as.character(taxon_raw) %in% c("8", "Reptiles", "RE", "Reptile")               ~ "Reptiles",
-      as.character(taxon_raw) %in% c("9", "Vascular Plants", "VP", "PL", "Plante")   ~ "Vascular Plants",
-      as.character(taxon_raw) %in% c("10", "Non-vascular Plants", "NV")              ~ "Non-vascular Plants",
-      as.character(taxon_raw) %in% c("11", "Molluscs", "MOLL", "Arthropods")         ~ "Molluscs",
-      as.character(taxon_raw) %in% c("12", "Fungi", "FU", "Champignons")             ~ "Fungi",
-      as.character(taxon_raw) %in% c("13", "Corals", "Sponges", "CO")                ~ "Corals / Sponges",
-      is.na(taxon_raw) | as.character(taxon_raw) %in% c("", "0", "99")                ~ "Not Specified",
-      TRUE                                                                           ~ as.character(taxon_raw)
+      as.character(taxon_raw) %in% c("1", "Amphibian", "Amphibians", "AM", "Amphibien")                      ~ "Amphibian",
+      as.character(taxon_raw) %in% c("2", "Arthropod", "Arthropods", "IN", "Invertebrates", "Invertébré")     ~ "Arthropod",
+      as.character(taxon_raw) %in% c("3", "Bird", "Birds", "BI", "AV", "Oiseau")                             ~ "Bird",
+      as.character(taxon_raw) %in% c("4", "Fish (freshwater)", "Fishes", "FI", "Poisson")                    ~ "Fish (freshwater)",
+      as.character(taxon_raw) %in% c("5", "Fish (marine)")                                                   ~ "Fish (marine)",
+      as.character(taxon_raw) %in% c("6", "Lichen", "Lichens", "LI")                                         ~ "Lichen",
+      as.character(taxon_raw) %in% c("7", "Mammal (marine)")                                                 ~ "Mammal (marine)",
+      as.character(taxon_raw) %in% c("8", "Mammal (terrestrial)", "Mammals", "MA", "Mammifère")              ~ "Mammal (terrestrial)",
+      as.character(taxon_raw) %in% c("9", "Mollusk (marine or freshwater)", "Molluscs", "MOLL")              ~ "Mollusk (marine or freshwater)",
+      as.character(taxon_raw) %in% c("10", "Mollusk (terrestrial)")                                          ~ "Mollusk (terrestrial)",
+      as.character(taxon_raw) %in% c("11", "Reptile", "Reptiles", "RE")                                      ~ "Reptile",
+      as.character(taxon_raw) %in% c("12", "Vascular Plant", "Vascular Plants", "VP", "PL", "Plante")        ~ "Vascular Plant",
+      as.character(taxon_raw) %in% c("13", "Non-vascular Plant", "Non-vascular Plants", "NV", "Mosses", "MO", "Mousse") ~ "Non-vascular Plant",
+      as.character(taxon_raw) %in% c("14", "Fungus", "Fungi", "FU", "Champignons")                           ~ "Fungus",
+      is.na(taxon_raw) | as.character(taxon_raw) %in% c("", "0", "99")                                      ~ "Not Specified",
+      TRUE                                                                                                  ~ as.character(taxon_raw)
     )
     
     final_table <- data.frame(
